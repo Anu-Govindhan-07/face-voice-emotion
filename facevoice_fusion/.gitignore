@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.npy
+*.log
+.env
+facevoice_fusion/data/

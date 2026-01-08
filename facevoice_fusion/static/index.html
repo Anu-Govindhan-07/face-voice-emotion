@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FaceVoice Fusion</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+      .log { background: #f5f5f5; padding: 1rem; height: 200px; overflow: auto; }
+      .tracks { margin-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>FaceVoice Fusion</h1>
+    <input type="file" id="fileInput" />
+    <button id="uploadBtn">Upload</button>
+    <p id="status"></p>
+    <div class="log" id="log"></div>
+    <div class="tracks" id="tracks"></div>
+    <script>
+      const uploadBtn = document.getElementById('uploadBtn');
+      const fileInput = document.getElementById('fileInput');
+      const log = document.getElementById('log');
+      const tracksDiv = document.getElementById('tracks');
+      const status = document.getElementById('status');
+
+      function appendLog(msg) {
+        log.innerText += msg + '\n';
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function renderTrack(track) {
+        const existing = document.getElementById(track.track_id);
+        const text = `${track.track_id} - ${track.identity?.name || 'Unknown'} - ${track.emotion?.dominant || 'neutral'}`;
+        if (existing) {
+          existing.innerText = text;
+          return;
+        }
+        const div = document.createElement('div');
+        div.id = track.track_id;
+        div.innerText = text;
+        tracksDiv.appendChild(div);
+      }
+
+      uploadBtn.onclick = async () => {
+        const file = fileInput.files[0];
+        if (!file) { alert('Select a video'); return; }
+        status.innerText = 'Uploading...';
+        const formData = new FormData();
+        formData.append('file', file);
+        const resp = await fetch('/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        status.innerText = `Job ${data.job_id} queued`;
+        appendLog(`Job ${data.job_id} queued`);
+
+        const evtSource = new EventSource(`/jobs/${data.job_id}/events`);
+        evtSource.addEventListener('job.progress', (event) => {
+          appendLog(`Progress: ${event.data}`);
+        });
+        evtSource.addEventListener('track.created', (event) => {
+          const payload = JSON.parse(event.data);
+          renderTrack(payload.track);
+        });
+        evtSource.addEventListener('track.identity', (event) => {
+          const payload = JSON.parse(event.data);
+          renderTrack({ track_id: payload.track_id, identity: payload.identity });
+        });
+        evtSource.addEventListener('track.emotion', (event) => {
+          const payload = JSON.parse(event.data);
+          renderTrack({ track_id: payload.track_id, emotion: payload.emotion_update });
+        });
+        evtSource.addEventListener('job.done', (event) => {
+          appendLog(`Done: ${event.data}`);
+          status.innerHTML = `Done. <a href="/jobs/${data.job_id}/ui" target="_blank">View ui.json</a>`;
+          evtSource.close();
+        });
+        evtSource.addEventListener('job.failed', (event) => {
+          appendLog(`Failed: ${event.data}`);
+          evtSource.close();
+        });
+      };
+    </script>
+  </body>
+</html>
