@@ -74,7 +74,7 @@ def enroll_identity(job_id: str, track_id: str, name: str) -> Dict[str, str]:
         "created_at": datetime.utcnow().isoformat(),
     })
     _save_store(store)
-    console.log("Enrolled identity", person_id=person_id, name=name, track=track_id)
+    console.log(f"Enrolled identity {person_id} ({name}) for track {track_id}")
     return {"person_id": person_id, "name": name}
 
 
