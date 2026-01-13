@@ -37,7 +37,7 @@ def _iou(box_a: Tuple[int, int, int, int], box_b: Tuple[int, int, int, int]) -> 
 
 
 def detect_and_track(video_path: Path, output_path: Path) -> Path:
-    console.log("Running face detection and tracking", video=str(video_path))
+    console.log(f"Running face detection and tracking for {video_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0

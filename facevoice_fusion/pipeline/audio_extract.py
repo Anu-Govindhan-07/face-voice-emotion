@@ -10,7 +10,7 @@ from .utils import console
 
 def extract_audio(video_path: Path, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    console.log("Extracting audio", video_path=str(video_path))
+    console.log(f"Extracting audio from {video_path}")
     (
         ffmpeg
         .input(str(video_path))

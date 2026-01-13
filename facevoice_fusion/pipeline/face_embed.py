@@ -45,6 +45,6 @@ def embed_faces(video_path: Path, tracks: List[dict], output_dir: Path) -> Dict[
         emb_path = output_dir / f"{track['track_id']}.npy"
         np.save(emb_path, embedding)
         embeddings[track["track_id"]] = emb_path
-        console.log("Saved embedding", track=track["track_id"], path=str(emb_path))
+        console.log(f"Saved embedding for track {track['track_id']} at {emb_path}")
 
     return embeddings
