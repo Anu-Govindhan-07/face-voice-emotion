@@ -35,6 +35,14 @@ def _load_ui(job_id: str) -> Path:
     return ui_path
 
 
+def _load_video(job_id: str) -> Path:
+    job_path = job_dir(job_id)
+    matches = sorted(job_path.glob("input_video.*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="video not found")
+    return matches[0]
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
     ensure_dirs()
@@ -75,6 +83,12 @@ async def get_job(job_id: str) -> JobStatusResponse:
 async def get_ui(job_id: str) -> FileResponse:
     ui_path = _load_ui(job_id)
     return FileResponse(ui_path)
+
+
+@app.get("/jobs/{job_id}/video")
+async def get_video(job_id: str) -> FileResponse:
+    video_path = _load_video(job_id)
+    return FileResponse(video_path)
 
 
 @app.get("/jobs/{job_id}/events")

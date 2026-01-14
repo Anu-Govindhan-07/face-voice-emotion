@@ -7,6 +7,10 @@
       body { font-family: Arial, sans-serif; margin: 2rem; }
       .log { background: #f5f5f5; padding: 1rem; height: 200px; overflow: auto; }
       .tracks { margin-top: 1rem; }
+      .viewer { margin-top: 1.5rem; max-width: 960px; }
+      .video-wrap { position: relative; width: 100%; background: #111; }
+      video { width: 100%; display: block; }
+      canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
     </style>
   </head>
   <body>
@@ -14,6 +18,12 @@
     <input type="file" id="fileInput" />
     <button id="uploadBtn">Upload</button>
     <p id="status"></p>
+    <div class="viewer">
+      <div class="video-wrap">
+        <video id="video" controls></video>
+        <canvas id="overlay"></canvas>
+      </div>
+    </div>
     <div class="log" id="log"></div>
     <div class="tracks" id="tracks"></div>
     <script>
@@ -22,6 +32,11 @@
       const log = document.getElementById('log');
       const tracksDiv = document.getElementById('tracks');
       const status = document.getElementById('status');
+      const video = document.getElementById('video');
+      const overlay = document.getElementById('overlay');
+      const overlayCtx = overlay.getContext('2d');
+      let uiData = null;
+      let animationId = null;
 
       function appendLog(msg) {
         log.innerText += msg + '\n';
@@ -40,6 +55,107 @@
         div.innerText = text;
         tracksDiv.appendChild(div);
       }
+
+      function setCanvasSize() {
+        if (!video.videoWidth || !video.videoHeight) {
+          return;
+        }
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        overlay.style.width = `${video.clientWidth}px`;
+        overlay.style.height = `${video.clientHeight}px`;
+      }
+
+      function findBoxAtTime(bboxes, time) {
+        let last = null;
+        for (const box of bboxes) {
+          if (box.t <= time) {
+            last = box;
+          } else {
+            break;
+          }
+        }
+        return last;
+      }
+
+      function drawOverlay() {
+        if (!uiData || !video.videoWidth || !video.videoHeight) {
+          overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+          return;
+        }
+        const currentTime = video.currentTime;
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        overlayCtx.lineWidth = 3;
+        overlayCtx.strokeStyle = '#00ff00';
+        overlayCtx.font = '18px Arial';
+        overlayCtx.textBaseline = 'bottom';
+        for (const track of uiData.tracks || []) {
+          if (currentTime < track.start || currentTime > track.end) {
+            continue;
+          }
+          const box = findBoxAtTime(track.bboxes || [], currentTime);
+          if (!box) {
+            continue;
+          }
+          overlayCtx.strokeRect(box.x, box.y, box.w, box.h);
+          const identityLabel = track.identity?.name || track.track_id;
+          const emotionLabel = track.emotion?.dominant || 'neutral';
+          const label = `${identityLabel} • ${emotionLabel}`;
+          const textWidth = overlayCtx.measureText(label).width;
+          const labelX = Math.max(0, box.x);
+          const labelY = Math.max(18, box.y - 6);
+          overlayCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+          overlayCtx.fillRect(labelX - 2, labelY - 18, textWidth + 6, 20);
+          overlayCtx.fillStyle = '#00ff00';
+          overlayCtx.fillText(label, labelX + 1, labelY - 2);
+        }
+      }
+
+      function startRenderLoop() {
+        if (animationId) {
+          return;
+        }
+        const render = () => {
+          drawOverlay();
+          animationId = requestAnimationFrame(render);
+        };
+        render();
+      }
+
+      function stopRenderLoop() {
+        if (animationId) {
+          cancelAnimationFrame(animationId);
+          animationId = null;
+        }
+      }
+
+      async function loadUi(jobId) {
+        const resp = await fetch(`/jobs/${jobId}/ui`);
+        uiData = await resp.json();
+        for (const track of uiData.tracks || []) {
+          if (Array.isArray(track.bboxes)) {
+            track.bboxes.sort((a, b) => a.t - b.t);
+          }
+        }
+        video.src = `/jobs/${jobId}/video`;
+        video.load();
+        drawOverlay();
+      }
+
+      video.addEventListener('loadedmetadata', () => {
+        setCanvasSize();
+        drawOverlay();
+      });
+      video.addEventListener('play', startRenderLoop);
+      video.addEventListener('pause', () => {
+        stopRenderLoop();
+        drawOverlay();
+      });
+      video.addEventListener('seeked', drawOverlay);
+      window.addEventListener('resize', () => {
+        setCanvasSize();
+        drawOverlay();
+      });
 
       uploadBtn.onclick = async () => {
         const file = fileInput.files[0];
@@ -71,6 +187,7 @@
         evtSource.addEventListener('job.done', (event) => {
           appendLog(`Done: ${event.data}`);
           status.innerHTML = `Done. <a href="/jobs/${data.job_id}/ui" target="_blank">View ui.json</a>`;
+          loadUi(data.job_id);
           evtSource.close();
         });
         evtSource.addEventListener('job.failed', (event) => {
