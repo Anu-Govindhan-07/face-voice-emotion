@@ -45,7 +45,13 @@
 
       function renderTrack(track) {
         const existing = document.getElementById(track.track_id);
-        const text = `${track.track_id} - ${track.identity?.name || 'Unknown'} - ${track.emotion?.dominant || 'neutral'}`;
+        const emotion = track.emotion || {};
+        const dominantLabel = emotion.dominant || 'neutral';
+        const dominantConf = Array.isArray(emotion.timeline)
+          ? Math.max(0, ...emotion.timeline.map((entry) => entry.conf || 0))
+          : 0;
+        const confLabel = dominantConf ? ` (${Math.round(dominantConf * 100)}%)` : '';
+        const text = `${track.track_id} - ${track.identity?.name || 'Unknown'} - ${dominantLabel}${confLabel}`;
         if (existing) {
           existing.innerText = text;
           return;
@@ -78,6 +84,18 @@
         return last;
       }
 
+      function findEmotionAtTime(timeline, time) {
+        if (!Array.isArray(timeline)) {
+          return null;
+        }
+        for (const entry of timeline) {
+          if (entry.start <= time && time <= entry.end) {
+            return entry;
+          }
+        }
+        return timeline.length ? timeline[timeline.length - 1] : null;
+      }
+
       function drawOverlay() {
         if (!uiData || !video.videoWidth || !video.videoHeight) {
           overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
@@ -99,8 +117,11 @@
           }
           overlayCtx.strokeRect(box.x, box.y, box.w, box.h);
           const identityLabel = track.identity?.name || track.track_id;
-          const emotionLabel = track.emotion?.dominant || 'neutral';
-          const label = `${identityLabel} • ${emotionLabel}`;
+          const emotionEntry = findEmotionAtTime(track.emotion?.timeline, currentTime);
+          const emotionLabel = emotionEntry?.label || track.emotion?.dominant || 'neutral';
+          const emotionConf = emotionEntry?.conf || 0;
+          const confLabel = emotionConf ? ` (${Math.round(emotionConf * 100)}%)` : '';
+          const label = `${identityLabel} • ${emotionLabel}${confLabel}`;
           const textWidth = overlayCtx.measureText(label).width;
           const labelX = Math.max(0, box.x);
           const labelY = Math.max(18, box.y - 6);

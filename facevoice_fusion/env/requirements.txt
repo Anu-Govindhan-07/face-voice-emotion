@@ -11,3 +11,5 @@ torchaudio==2.2.2
 soundfile==0.12.1
 ffmpeg-python==0.2.0
 rich==13.7.1
+transformers==4.42.4
+Pillow==10.3.0

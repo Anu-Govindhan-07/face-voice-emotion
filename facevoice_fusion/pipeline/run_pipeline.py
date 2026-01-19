@@ -62,7 +62,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         if emotions_path.exists():
             emotions = load_json(emotions_path).get("tracks", {})
         else:
-            emotions = infer_emotions(tracks, emotions_path)
+            emotions = infer_emotions(tracks, emotions_path, video_path)
         artifacts["emotions"] = str(emotions_path)
         for track in tracks:
             emotion = emotions.get(track["track_id"], {"dominant": "neutral", "timeline": []})
