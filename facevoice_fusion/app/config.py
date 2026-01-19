@@ -20,6 +20,6 @@ AUDIO_SAMPLE_RATE = 16000
 MODEL_VERSIONS = {
     "face_detector": "facenet-pytorch-mtcnn",
     "face_embedder": "facenet-pytorch-inceptionresnetv1",
-    "emotion_model": "stub-neutral-v1",
+    "emotion_model": "nateraw/fer",
     "diarization_model": "pyannote-or-fallback",
 }

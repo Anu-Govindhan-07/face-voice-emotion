@@ -28,7 +28,7 @@ The system is designed to learn identities over time with human-in-the-loop conf
 
 ✅ Identity recognition (name shown if already known)
 
-✅ Emotion detection with smoothing
+✅ Emotion detection with transformer-based facial expression model + confidence overlay
 
 ✅ Voice diarization (S1, S2…)
 
@@ -88,6 +88,8 @@ Torch / TorchVision / Torchaudio (CPU)
 
 OpenCV
 
+Transformers (Hugging Face) for facial expression recognition (`nateraw/fer`)
+
 facenet-pytorch (MTCNN + FaceNet embeddings)
 
 FFmpeg
@@ -111,12 +113,17 @@ macOS: brew install ffmpeg
 
 Linux: sudo apt install ffmpeg
 
+Internet access on first run to download the emotion model weights from Hugging Face
+
 Optional
 
 Hugging Face token (for real diarization)
 
 setx HUGGINGFACE_TOKEN hf_xxx   # Windows
 export HUGGINGFACE_TOKEN=hf_xxx # macOS/Linux
+
+Emotion model override (defaults to `nateraw/fer`)
+export EMOTION_MODEL_NAME=nateraw/fer
 
 🚀 Installation
 1) Clone Repository
@@ -232,7 +239,7 @@ Future videos auto-label that person
 
 No HuggingFace token → diarization falls back to single speaker
 
-No emotion model → neutral emotion stub
+Emotion model downloads from Hugging Face on first run (requires network access)
 
 No GPU → CPU inference only
 
@@ -260,7 +267,7 @@ Torch issues on Windows
 
 Real-time webcam mode
 
-Better emotion model
+Faster emotion model
 
 GPU acceleration
 

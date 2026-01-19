@@ -8,6 +8,7 @@ End-to-end pipeline for uploading a video, detecting/tracking faces, matching id
   - Windows: https://ffmpeg.org/download.html
   - macOS: `brew install ffmpeg`
   - Linux: use your distro package manager
+- **Internet access on first run** to download the emotion model weights from Hugging Face
 
 ## Setup
 
@@ -36,6 +37,13 @@ cd facevoice_fusion
 ```
 
 The API will be available at `http://localhost:8000`.
+
+## Emotion model configuration
+The pipeline uses the Hugging Face model `nateraw/fer` by default. Override with:
+
+```bash
+export EMOTION_MODEL_NAME=nateraw/fer
+```
 
 ## Upload a video (curl)
 ```bash
