@@ -19,7 +19,8 @@ FACE_MAYBE_THRESHOLD = 0.45
 
 AUDIO_SAMPLE_RATE = 16000
 
-EMOTION_MODEL_NAME = os.getenv("EMOTION_MODEL_NAME", "trpakov/vit-face-expression")
+_raw_emotion_model = os.getenv("EMOTION_MODEL_NAME", "trpakov/vit-face-expression")
+EMOTION_MODEL_NAME = "trpakov/vit-face-expression" if _raw_emotion_model == "nateraw/fer" else _raw_emotion_model
 
 MODEL_VERSIONS = {
     "face_detector": "facenet-pytorch-mtcnn",
