@@ -101,6 +101,13 @@ export HUGGINGFACE_TOKEN="your_token"
 
 If the token is missing or pyannote is unavailable, the pipeline falls back to a single-speaker diarization.
 
+## Optional: Emotion model selection
+The default emotion model is `trpakov/vit-face-expression`. You can override it by setting:
+
+```bash
+export EMOTION_MODEL_NAME="your-hf-model-id"
+```
+
 ## Troubleshooting
 - **NumPy pin**: The project pins `numpy==1.26.4` to avoid breaking changes in 2.x.
 - **FFmpeg not found**: Ensure `ffmpeg` is installed and on PATH.
