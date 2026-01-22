@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 from transformers import pipeline
 
+from app.config import HUGGINGFACE_TOKEN
 from .utils import console, save_json
 
 
@@ -27,10 +28,13 @@ def _get_emotion_classifier():
     global _emotion_classifier
     if _emotion_classifier is None:
         console.log(f"Loading emotion model: {EMOTION_MODEL_NAME}")
+        pipeline_kwargs = {"device": -1}
+        if HUGGINGFACE_TOKEN:
+            pipeline_kwargs["token"] = HUGGINGFACE_TOKEN
         _emotion_classifier = pipeline(
             "image-classification",
             model=EMOTION_MODEL_NAME,
-            device=-1,
+            **pipeline_kwargs,
         )
     return _emotion_classifier
 
