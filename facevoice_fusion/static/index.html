@@ -37,6 +37,7 @@
       const overlayCtx = overlay.getContext('2d');
       let uiData = null;
       let animationId = null;
+      const trackState = {};
 
       function appendLog(msg) {
         log.innerText += msg + '\n';
@@ -44,20 +45,28 @@
       }
 
       function renderTrack(track) {
+        const current = trackState[track.track_id] || {};
+        const merged = {
+          ...current,
+          ...track,
+          identity: { ...(current.identity || {}), ...(track.identity || {}) },
+          emotion: { ...(current.emotion || {}), ...(track.emotion || {}) },
+        };
+        trackState[track.track_id] = merged;
         const existing = document.getElementById(track.track_id);
-        const emotion = track.emotion || {};
+        const emotion = merged.emotion || {};
         const dominantLabel = emotion.dominant || 'neutral';
         const dominantConf = Array.isArray(emotion.timeline)
           ? Math.max(0, ...emotion.timeline.map((entry) => entry.conf || 0))
           : 0;
         const confLabel = dominantConf ? ` (${Math.round(dominantConf * 100)}%)` : '';
-        const text = `${track.track_id} - ${track.identity?.name || 'Unknown'} - ${dominantLabel}${confLabel}`;
+        const text = `${merged.track_id} - ${merged.identity?.name || 'Unknown'} - ${dominantLabel}${confLabel}`;
         if (existing) {
           existing.innerText = text;
           return;
         }
         const div = document.createElement('div');
-        div.id = track.track_id;
+        div.id = merged.track_id;
         div.innerText = text;
         tracksDiv.appendChild(div);
       }
@@ -157,6 +166,7 @@
           if (Array.isArray(track.bboxes)) {
             track.bboxes.sort((a, b) => a.t - b.t);
           }
+          renderTrack(track);
         }
         video.src = `/jobs/${jobId}/video`;
         video.load();
@@ -188,6 +198,8 @@
         const data = await resp.json();
         status.innerText = `Job ${data.job_id} queued`;
         appendLog(`Job ${data.job_id} queued`);
+        video.src = `/jobs/${data.job_id}/video`;
+        video.load();
 
         const evtSource = new EventSource(`/jobs/${data.job_id}/events`);
         evtSource.addEventListener('job.progress', (event) => {

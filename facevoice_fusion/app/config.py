@@ -11,15 +11,20 @@ IDENTITY_STORE = BASE_DIR / "identity_store" / "identities.json"
 STATIC_DIR = BASE_DIR / "static"
 
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+if HUGGINGFACE_TOKEN and not os.getenv("HF_TOKEN"):
+    os.environ["HF_TOKEN"] = HUGGINGFACE_TOKEN
 
 FACE_MATCH_THRESHOLD = 0.55
 FACE_MAYBE_THRESHOLD = 0.45
 
 AUDIO_SAMPLE_RATE = 16000
 
+_raw_emotion_model = os.getenv("EMOTION_MODEL_NAME", "trpakov/vit-face-expression")
+EMOTION_MODEL_NAME = "trpakov/vit-face-expression" if _raw_emotion_model == "nateraw/fer" else _raw_emotion_model
+
 MODEL_VERSIONS = {
     "face_detector": "facenet-pytorch-mtcnn",
     "face_embedder": "facenet-pytorch-inceptionresnetv1",
-    "emotion_model": "nateraw/fer",
+    "emotion_model": EMOTION_MODEL_NAME,
     "diarization_model": "pyannote-or-fallback",
 }

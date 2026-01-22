@@ -9,10 +9,10 @@ import numpy as np
 from PIL import Image
 from transformers import pipeline
 
+from app.config import EMOTION_MODEL_NAME, HUGGINGFACE_TOKEN
 from .utils import console, save_json
 
 
-EMOTION_MODEL_NAME = os.getenv("EMOTION_MODEL_NAME", "nateraw/fer")
 EMOTION_LABELS = {"happy", "sad", "anger", "fear", "disgust", "surprise", "neutral"}
 LABEL_NORMALIZATION = {
     "angry": "anger",
@@ -26,12 +26,26 @@ _emotion_classifier = None
 def _get_emotion_classifier():
     global _emotion_classifier
     if _emotion_classifier is None:
-        console.log(f"Loading emotion model: {EMOTION_MODEL_NAME}")
-        _emotion_classifier = pipeline(
-            "image-classification",
-            model=EMOTION_MODEL_NAME,
-            device=-1,
-        )
+        model_candidates = [EMOTION_MODEL_NAME, "trpakov/vit-face-expression"]
+        pipeline_kwargs = {"device": -1}
+        if HUGGINGFACE_TOKEN:
+            pipeline_kwargs["token"] = HUGGINGFACE_TOKEN
+        last_error = None
+        for model_name in dict.fromkeys(model_candidates):
+            try:
+                console.log(f"Loading emotion model: {model_name}")
+                _emotion_classifier = pipeline(
+                    "image-classification",
+                    model=model_name,
+                    **pipeline_kwargs,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                console.log(f"Failed to load emotion model {model_name}: {exc}")
+                _emotion_classifier = None
+        if _emotion_classifier is None and last_error:
+            raise last_error
     return _emotion_classifier
 
 
