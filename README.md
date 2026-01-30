@@ -28,7 +28,7 @@ The system is designed to learn identities over time with human-in-the-loop conf
 
 ✅ Identity recognition (name shown if already known)
 
-✅ Emotion detection with transformer-based facial expression model + confidence overlay
+✅ Emotion detection with transformer-based facial expression model (`trpakov/vit-face-expression`) + confidence overlay
 
 ✅ Voice diarization (S1, S2…)
 
@@ -70,6 +70,16 @@ facevoice_fusion/
   scripts/            # install/run helpers
   .vscode/            # VS Code config
   README.md
+
+🧠 Models Used
+Face Detection & Tracking
+
+- Detector: facenet-pytorch MTCNN for face detection.
+- Embedder: facenet-pytorch InceptionResnetV1 (`vggface2`) for face embeddings/identity matching.
+
+Emotion Detection
+
+- Transformer model: `trpakov/vit-face-expression` (Hugging Face). The app accepts `EMOTION_MODEL_NAME=nateraw/fer` but maps it to `trpakov/vit-face-expression` for compatibility.
 
 🧰 Tech Stack
 Languages
