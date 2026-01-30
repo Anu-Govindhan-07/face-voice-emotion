@@ -16,6 +16,10 @@ from .utils import console, save_json
 EMOTION_LABELS = {"happy", "sad", "anger", "fear", "disgust", "surprise", "neutral"}
 LABEL_NORMALIZATION = {
     "angry": "anger",
+    "disgusted": "disgust",
+    "fearful": "fear",
+    "happiness": "happy",
+    "sadness": "sad",
     "surprised": "surprise",
 }
 SAMPLE_EVERY = 3
