@@ -29,6 +29,8 @@ def diarize_audio(audio_path: Path, output_path: Path) -> List[dict]:
                     "conf": 0.9,
                 })
                 idx += 1
+        except ImportError:
+            console.log("Pyannote is not installed; falling back to single-speaker diarization.")
         except Exception as exc:
             console.log(f"Pyannote diarization failed, fallback mode: {exc}")
 
