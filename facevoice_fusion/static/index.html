@@ -585,6 +585,9 @@
           identity: { ...(current.identity || {}), ...(track.identity || {}) },
           emotion: { ...(current.emotion || {}), ...(track.emotion || {}) },
         };
+        if (Array.isArray(merged.bboxes)) {
+          merged.bboxes.sort((a, b) => a.t - b.t);
+        }
         trackState[track.track_id] = merged;
         const existing = document.getElementById(track.track_id);
         const emotion = merged.emotion || {};
@@ -618,15 +621,39 @@
       }
 
       function findBoxAtTime(bboxes, time) {
-        let last = null;
+        if (!Array.isArray(bboxes) || !bboxes.length) {
+          return null;
+        }
+        let previous = null;
         for (const box of bboxes) {
           if (box.t <= time) {
-            last = box;
-          } else {
-            break;
+            previous = box;
+            continue;
           }
+          if (!previous) {
+            return box;
+          }
+          const duration = box.t - previous.t;
+          if (duration <= 0) {
+            return previous;
+          }
+          const ratio = Math.min(1, Math.max(0, (time - previous.t) / duration));
+          return {
+            x: previous.x + (box.x - previous.x) * ratio,
+            y: previous.y + (box.y - previous.y) * ratio,
+            w: previous.w + (box.w - previous.w) * ratio,
+            h: previous.h + (box.h - previous.h) * ratio,
+          };
         }
-        return last;
+        return previous;
+      }
+
+      function getRenderableTracks() {
+        const tracks = Object.values(trackState);
+        if (tracks.length) {
+          return tracks;
+        }
+        return uiData?.tracks || [];
       }
 
       function findEmotionAtTime(timeline, time) {
@@ -642,7 +669,7 @@
       }
 
       function drawOverlay() {
-        if (!uiData || !video.videoWidth || !video.videoHeight) {
+        if ((!uiData && !Object.keys(trackState).length) || !video.videoWidth || !video.videoHeight) {
           overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
           return;
         }
@@ -652,11 +679,15 @@
         overlayCtx.strokeStyle = '#33e3ff';
         overlayCtx.font = '16px Inter, Arial';
         overlayCtx.textBaseline = 'bottom';
-        for (const track of uiData.tracks || []) {
-          if (currentTime < track.start || currentTime > track.end) {
+        for (const track of getRenderableTracks()) {
+          const bboxes = track.bboxes || [];
+          const startTime = typeof track.start === 'number' ? track.start : bboxes[0]?.t ?? 0;
+          const endTime =
+            typeof track.end === 'number' ? track.end : bboxes[bboxes.length - 1]?.t ?? 0;
+          if (currentTime < startTime || currentTime > endTime) {
             continue;
           }
-          const box = findBoxAtTime(track.bboxes || [], currentTime);
+          const box = findBoxAtTime(bboxes, currentTime);
           if (!box) {
             continue;
           }
