@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 from pathlib import Path
 from typing import List
 
+import ffmpeg
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +28,8 @@ from pipeline.run_pipeline import run_pipeline
 console = Console()
 
 app = FastAPI(title="FaceVoice Fusion")
+PREVIEW_FILENAME = "input_video_preview.mp4"
+PREVIEW_COMPATIBLE_EXTENSIONS = {".mp4", ".webm", ".ogg", ".ogv"}
 
 
 def _load_ui(job_id: str) -> Path:
@@ -37,10 +41,37 @@ def _load_ui(job_id: str) -> Path:
 
 def _load_video(job_id: str) -> Path:
     job_path = job_dir(job_id)
+    preview_path = job_path / PREVIEW_FILENAME
+    if preview_path.exists():
+        return preview_path
     matches = sorted(job_path.glob("input_video.*"))
     if not matches:
         raise HTTPException(status_code=404, detail="video not found")
     return matches[0]
+
+
+def _preview_path(job_id: str) -> Path:
+    return job_dir(job_id) / PREVIEW_FILENAME
+
+
+def create_preview_video(video_path: Path, preview_path: Path) -> None:
+    if preview_path.exists():
+        return
+    console.log(f"Creating preview video at {preview_path}")
+    try:
+        (
+            ffmpeg.input(str(video_path))
+            .output(
+                str(preview_path),
+                vcodec="libx264",
+                acodec="aac",
+                movflags="faststart",
+            )
+            .overwrite_output()
+            .run(quiet=True)
+        )
+    except ffmpeg.Error as exc:
+        console.log(f"Failed to create preview video: {exc}")
 
 
 @app.on_event("startup")
@@ -60,6 +91,8 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
     content = await file.read()
     video_path.write_bytes(content)
     console.log(f"Saved upload to {video_path}")
+    if video_path.suffix.lower() not in PREVIEW_COMPATIBLE_EXTENSIONS:
+        background_tasks.add_task(create_preview_video, video_path, _preview_path(job.job_id))
     background_tasks.add_task(run_pipeline, job.job_id, video_path)
     return UploadResponse(job_id=job.job_id, video_id=job.video_id, status=job.status)
 
@@ -88,7 +121,8 @@ async def get_ui(job_id: str) -> FileResponse:
 @app.get("/jobs/{job_id}/video")
 async def get_video(job_id: str) -> FileResponse:
     video_path = _load_video(job_id)
-    return FileResponse(video_path)
+    media_type, _ = mimetypes.guess_type(video_path.name)
+    return FileResponse(video_path, media_type=media_type)
 
 
 @app.get("/jobs/{job_id}/events")
