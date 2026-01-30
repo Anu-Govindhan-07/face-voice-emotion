@@ -15,7 +15,7 @@
   </head>
   <body>
     <h1>FaceVoice Fusion</h1>
-    <input type="file" id="fileInput" />
+    <input type="file" id="fileInput" accept="video/*,.mxf,.mfx,.avi,.mov,.mkv,.wmv" />
     <button id="uploadBtn">Upload</button>
     <p id="status"></p>
     <div class="viewer">
@@ -38,6 +38,9 @@
       let uiData = null;
       let animationId = null;
       const trackState = {};
+      let currentJobId = null;
+      let previewRetryCount = 0;
+      const maxPreviewRetries = 12;
 
       function appendLog(msg) {
         log.innerText += msg + '\n';
@@ -159,6 +162,13 @@
         }
       }
 
+      function loadVideo(jobId) {
+        currentJobId = jobId;
+        const cacheBust = Date.now();
+        video.src = `/jobs/${jobId}/video?ts=${cacheBust}`;
+        video.load();
+      }
+
       async function loadUi(jobId) {
         const resp = await fetch(`/jobs/${jobId}/ui`);
         uiData = await resp.json();
@@ -168,14 +178,23 @@
           }
           renderTrack(track);
         }
-        video.src = `/jobs/${jobId}/video`;
-        video.load();
+        loadVideo(jobId);
         drawOverlay();
       }
 
       video.addEventListener('loadedmetadata', () => {
+        previewRetryCount = 0;
         setCanvasSize();
         drawOverlay();
+      });
+      video.addEventListener('error', () => {
+        if (!currentJobId || previewRetryCount >= maxPreviewRetries) {
+          return;
+        }
+        previewRetryCount += 1;
+        const retryDelay = 2000;
+        status.innerText = 'Preparing a preview format for this video...';
+        setTimeout(() => loadVideo(currentJobId), retryDelay);
       });
       video.addEventListener('play', startRenderLoop);
       video.addEventListener('pause', () => {
@@ -198,8 +217,7 @@
         const data = await resp.json();
         status.innerText = `Job ${data.job_id} queued`;
         appendLog(`Job ${data.job_id} queued`);
-        video.src = `/jobs/${data.job_id}/video`;
-        video.load();
+        loadVideo(data.job_id);
 
         const evtSource = new EventSource(`/jobs/${data.job_id}/events`);
         evtSource.addEventListener('job.progress', (event) => {
