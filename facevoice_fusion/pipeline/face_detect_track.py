@@ -8,7 +8,12 @@ import cv2
 import numpy as np
 from facenet_pytorch import MTCNN
 
-from app.config import FACE_DETECT_MAX_DIM, FACE_DETECT_SAMPLE_EVERY
+from app.config import (
+    FACE_DETECT_MAX_DIM,
+    FACE_DETECT_MIN_CONF,
+    FACE_DETECT_MIN_SIZE,
+    FACE_DETECT_SAMPLE_EVERY,
+)
 from .utils import console, save_json
 
 
@@ -70,10 +75,17 @@ def detect_and_track(video_path: Path, output_path: Path) -> Path:
             for box, conf in zip(boxes, probs):
                 if conf is None:
                     continue
+                conf_value = float(conf)
+                if conf_value < FACE_DETECT_MIN_CONF:
+                    continue
                 if scale != 1.0:
                     box = box / scale
                 x1, y1, x2, y2 = [int(v) for v in box]
-                detections.append(((x1, y1, x2 - x1, y2 - y1), float(conf)))
+                width = x2 - x1
+                height = y2 - y1
+                if width < FACE_DETECT_MIN_SIZE or height < FACE_DETECT_MIN_SIZE:
+                    continue
+                detections.append(((x1, y1, width, height), conf_value))
 
         unmatched = detections.copy()
         for track in tracks:

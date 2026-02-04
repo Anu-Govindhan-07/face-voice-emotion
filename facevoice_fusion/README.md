@@ -45,6 +45,14 @@ The pipeline uses the Hugging Face model `nateraw/fer` by default. Override with
 export EMOTION_MODEL_NAME=nateraw/fer
 ```
 
+## Face detection tuning
+If you see false face boxes, raise the minimum confidence or size thresholds:
+
+```bash
+export FACE_DETECT_MIN_CONF=0.9
+export FACE_DETECT_MIN_SIZE=40
+```
+
 ## Upload a video (curl)
 ```bash
 curl -F "file=@/path/to/video.mp4" http://localhost:8000/upload

@@ -20,6 +20,8 @@ FACE_MAYBE_THRESHOLD = 0.45
 AUDIO_SAMPLE_RATE = 16000
 FACE_DETECT_SAMPLE_EVERY = int(os.getenv("FACE_DETECT_SAMPLE_EVERY", "5"))
 FACE_DETECT_MAX_DIM = int(os.getenv("FACE_DETECT_MAX_DIM", "720"))
+FACE_DETECT_MIN_CONF = float(os.getenv("FACE_DETECT_MIN_CONF", "0.9"))
+FACE_DETECT_MIN_SIZE = int(os.getenv("FACE_DETECT_MIN_SIZE", "40"))
 
 _raw_emotion_model = os.getenv("EMOTION_MODEL_NAME", "trpakov/vit-face-expression")
 EMOTION_MODEL_NAME = "trpakov/vit-face-expression" if _raw_emotion_model == "nateraw/fer" else _raw_emotion_model
