@@ -454,7 +454,7 @@
         overlay.style.height = `${video.clientHeight}px`;
       }
 
-      function findBoxAtTime(bboxes, time) {
+      function findBoxAtTime(bboxes, time, maxGapSeconds = 0.5) {
         if (!Array.isArray(bboxes) || !bboxes.length) {
           return null;
         }
@@ -471,6 +471,9 @@
           if (duration <= 0) {
             return previous;
           }
+          if (duration > maxGapSeconds && time - previous.t > maxGapSeconds) {
+            return null;
+          }
           const ratio = Math.min(1, Math.max(0, (time - previous.t) / duration));
           return {
             x: previous.x + (box.x - previous.x) * ratio,
@@ -478,6 +481,9 @@
             w: previous.w + (box.w - previous.w) * ratio,
             h: previous.h + (box.h - previous.h) * ratio,
           };
+        }
+        if (previous && time - previous.t > maxGapSeconds) {
+          return null;
         }
         return previous;
       }
@@ -507,6 +513,7 @@
           overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
           return;
         }
+        const maxTrackGapSeconds = 0.5;
         const currentTime = video.currentTime;
         overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
         overlayCtx.lineWidth = 2.5;
@@ -521,7 +528,7 @@
           if (currentTime < startTime || currentTime > endTime) {
             continue;
           }
-          const box = findBoxAtTime(bboxes, currentTime);
+          const box = findBoxAtTime(bboxes, currentTime, maxTrackGapSeconds);
           if (!box) {
             continue;
           }
