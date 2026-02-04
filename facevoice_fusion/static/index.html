@@ -379,6 +379,7 @@
       let currentJobId = null;
       let previewRetryCount = 0;
       const maxPreviewRetries = 12;
+      let currentEventSource = null;
 
       function formatDate(date) {
         return date.toLocaleDateString('en-US', {
@@ -559,6 +560,23 @@
         }
       }
 
+      function resetJobState() {
+        uiData = null;
+        currentJobId = null;
+        previewRetryCount = 0;
+        stopRenderLoop();
+        Object.keys(trackState).forEach((key) => delete trackState[key]);
+        speakerState = [];
+        associationState = [];
+        tracksDiv.innerHTML = '';
+        speakerList.innerHTML = '';
+        associationList.innerHTML = '';
+        summaryGrid.innerHTML = '';
+        trackCount.textContent = '0';
+        speakerCount.textContent = '0';
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      }
+
       function loadVideo(jobId) {
         currentJobId = jobId;
         const cacheBust = Date.now();
@@ -692,56 +710,88 @@
           alert('Select a video');
           return;
         }
+        uploadBtn.disabled = true;
         status.innerText = 'Uploading...';
+        if (currentEventSource) {
+          currentEventSource.close();
+          currentEventSource = null;
+        }
+        resetJobState();
+        log.innerText = '';
         const formData = new FormData();
         formData.append('file', file);
-        const resp = await fetch('/upload', { method: 'POST', body: formData });
-        const data = await resp.json();
-        status.innerText = `Job ${data.job_id} queued`;
-        appendLog(`Job ${data.job_id} queued`);
-        loadVideo(data.job_id);
+        try {
+          const resp = await fetch('/upload', { method: 'POST', body: formData });
+          if (!resp.ok) {
+            const errorText = await resp.text();
+            throw new Error(errorText || `Upload failed with status ${resp.status}`);
+          }
+          const data = await resp.json();
+          status.innerText = `Job ${data.job_id} queued`;
+          appendLog(`Job ${data.job_id} queued`);
+          loadVideo(data.job_id);
 
-        const evtSource = new EventSource(`/jobs/${data.job_id}/events`);
-        evtSource.addEventListener('job.progress', (event) => {
-          appendLog(`Progress: ${event.data}`);
-        });
-        evtSource.addEventListener('track.created', (event) => {
-          const payload = JSON.parse(event.data);
-          renderTrack(payload.track);
-        });
-        evtSource.addEventListener('track.identity', (event) => {
-          const payload = JSON.parse(event.data);
-          renderTrack({ track_id: payload.track_id, identity: payload.identity });
-        });
-        evtSource.addEventListener('track.emotion', (event) => {
-          const payload = JSON.parse(event.data);
-          renderTrack({ track_id: payload.track_id, emotion: payload.emotion_update });
-        });
-        evtSource.addEventListener('speaker.segment', (event) => {
-          const payload = JSON.parse(event.data);
-          speakerState = [...speakerState, payload.segment];
-          refreshPanels();
-        });
-        evtSource.addEventListener('association.updated', (event) => {
-          const payload = JSON.parse(event.data);
-          const association = payload.association;
-          associationState = associationState.filter(
-            (entry) =>
-              !(entry.track_id === association.track_id && entry.speaker_id === association.speaker_id),
-          );
-          associationState.push(association);
-          refreshPanels();
-        });
-        evtSource.addEventListener('job.done', (event) => {
-          appendLog(`Done: ${event.data}`);
-          status.innerHTML = `Done. <a href="/jobs/${data.job_id}/ui" target="_blank">View ui.json</a>`;
-          loadUi(data.job_id);
-          evtSource.close();
-        });
-        evtSource.addEventListener('job.failed', (event) => {
-          appendLog(`Failed: ${event.data}`);
-          evtSource.close();
-        });
+          const evtSource = new EventSource(`/jobs/${data.job_id}/events`);
+          currentEventSource = evtSource;
+          evtSource.addEventListener('job.progress', (event) => {
+            appendLog(`Progress: ${event.data}`);
+          });
+          evtSource.addEventListener('track.created', (event) => {
+            const payload = JSON.parse(event.data);
+            renderTrack(payload.track);
+          });
+          evtSource.addEventListener('track.identity', (event) => {
+            const payload = JSON.parse(event.data);
+            renderTrack({ track_id: payload.track_id, identity: payload.identity });
+          });
+          evtSource.addEventListener('track.emotion', (event) => {
+            const payload = JSON.parse(event.data);
+            renderTrack({ track_id: payload.track_id, emotion: payload.emotion_update });
+          });
+          evtSource.addEventListener('speaker.segment', (event) => {
+            const payload = JSON.parse(event.data);
+            speakerState = [...speakerState, payload.segment];
+            refreshPanels();
+          });
+          evtSource.addEventListener('association.updated', (event) => {
+            const payload = JSON.parse(event.data);
+            const association = payload.association;
+            associationState = associationState.filter(
+              (entry) =>
+                !(entry.track_id === association.track_id && entry.speaker_id === association.speaker_id),
+            );
+            associationState.push(association);
+            refreshPanels();
+          });
+          evtSource.addEventListener('job.done', (event) => {
+            appendLog(`Done: ${event.data}`);
+            status.innerHTML = `Done. <a href="/jobs/${data.job_id}/ui" target="_blank">View ui.json</a>`;
+            loadUi(data.job_id);
+            evtSource.close();
+            if (currentEventSource === evtSource) {
+              currentEventSource = null;
+            }
+          });
+          evtSource.addEventListener('job.failed', (event) => {
+            appendLog(`Failed: ${event.data}`);
+            status.innerText = 'Job failed. Check logs for details.';
+            evtSource.close();
+            if (currentEventSource === evtSource) {
+              currentEventSource = null;
+            }
+          });
+          evtSource.addEventListener('error', () => {
+            if (currentEventSource === evtSource) {
+              status.innerText = 'Connection lost. Please try again.';
+              currentEventSource = null;
+            }
+          });
+        } catch (error) {
+          status.innerText = 'Upload failed. Please try again.';
+          appendLog(`Upload failed: ${error.message}`);
+        } finally {
+          uploadBtn.disabled = false;
+        }
       };
     </script>
   </body>
