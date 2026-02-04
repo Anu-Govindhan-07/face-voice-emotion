@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from facenet_pytorch import MTCNN
 
+from app.config import FACE_DETECT_MAX_DIM, FACE_DETECT_SAMPLE_EVERY
 from .utils import console, save_json
 
 
@@ -45,7 +46,7 @@ def detect_and_track(video_path: Path, output_path: Path) -> Path:
 
     tracks: List[Track] = []
     frame_idx = 0
-    sample_every = 5
+    sample_every = max(1, FACE_DETECT_SAMPLE_EVERY)
 
     while True:
         ret, frame = cap.read()
@@ -54,6 +55,13 @@ def detect_and_track(video_path: Path, output_path: Path) -> Path:
         if frame_idx % sample_every != 0:
             frame_idx += 1
             continue
+        scale = 1.0
+        if FACE_DETECT_MAX_DIM > 0:
+            height, width = frame.shape[:2]
+            max_dim = max(height, width)
+            if max_dim > FACE_DETECT_MAX_DIM:
+                scale = FACE_DETECT_MAX_DIM / float(max_dim)
+                frame = cv2.resize(frame, (int(width * scale), int(height * scale)))
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         boxes, probs = mtcnn.detect(rgb)
         timestamp = frame_idx / fps
@@ -62,6 +70,8 @@ def detect_and_track(video_path: Path, output_path: Path) -> Path:
             for box, conf in zip(boxes, probs):
                 if conf is None:
                     continue
+                if scale != 1.0:
+                    box = box / scale
                 x1, y1, x2, y2 = [int(v) for v in box]
                 detections.append(((x1, y1, x2 - x1, y2 - y1), float(conf)))
 
