@@ -42,6 +42,25 @@ def _iou(box_a: Tuple[int, int, int, int], box_b: Tuple[int, int, int, int]) -> 
     return inter_area / float(area_a + area_b - inter_area)
 
 
+def _nms(
+    detections: List[Tuple[Tuple[int, int, int, int], float]],
+    threshold: float,
+) -> List[Tuple[Tuple[int, int, int, int], float]]:
+    if not detections:
+        return []
+    ordered = sorted(detections, key=lambda item: item[1], reverse=True)
+    keep: List[Tuple[Tuple[int, int, int, int], float]] = []
+    while ordered:
+        current = ordered.pop(0)
+        keep.append(current)
+        remaining = []
+        for candidate in ordered:
+            if _iou(current[0], candidate[0]) <= threshold:
+                remaining.append(candidate)
+        ordered = remaining
+    return keep
+
+
 def detect_and_track(video_path: Path, output_path: Path) -> Path:
     console.log(f"Running face detection and tracking for {video_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +105,7 @@ def detect_and_track(video_path: Path, output_path: Path) -> Path:
                 if width < FACE_DETECT_MIN_SIZE or height < FACE_DETECT_MIN_SIZE:
                     continue
                 detections.append(((x1, y1, width, height), conf_value))
+        detections = _nms(detections, 0.4)
 
         unmatched = detections.copy()
         for track in tracks:
