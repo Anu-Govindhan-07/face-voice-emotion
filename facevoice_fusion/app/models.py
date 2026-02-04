@@ -117,6 +117,8 @@ class UIExport(BaseModel):
     artifacts: Artifacts
     model_versions: ModelVersions
 
+    model_config = {"protected_namespaces": ()}
+
 
 class SSEEvent(BaseModel):
     event: str
