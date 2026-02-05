@@ -13,7 +13,8 @@ from .diarize import diarize_audio
 from .emotion import infer_emotions
 from .face_detect_track import detect_and_track
 from .face_embed import embed_faces
-from .identity import match_identity, remember_identity_embedding
+from .identity import enroll_identity, match_identity, remember_identity_embedding
+from .transcribe import infer_speaker_names, transcribe_audio
 from .utils import console, load_json, save_json
 
 
@@ -85,6 +86,13 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         for segment in speakers:
             _publish(job_id, "speaker.segment", {"segment": segment})
 
+        transcript_path = job_file(job_id, "transcript.json")
+        if transcript_path.exists():
+            transcript_segments = load_json(transcript_path).get("segments", [])
+        else:
+            transcript_segments = transcribe_audio(audio_path, transcript_path)
+        artifacts["transcript"] = str(transcript_path)
+
         job_store.update_job(job_id, stage="associate", progress=70, artifacts=artifacts)
         _publish(job_id, "job.progress", {"stage": "diarize", "progress": 70})
 
@@ -92,9 +100,19 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         if assoc_path.exists():
             associations = load_json(assoc_path).get("associations", [])
         else:
-            associations = associate_speakers(tracks, speakers, assoc_path)
+            speaker_names = infer_speaker_names(speakers, transcript_segments)
+            associations = associate_speakers(tracks, speakers, assoc_path, speaker_names=speaker_names)
         artifacts["associations"] = str(assoc_path)
         for association in associations:
+            inferred_name = association.get("inferred_name")
+            if inferred_name:
+                track = next((item for item in tracks if item.get("track_id") == association.get("track_id")), None)
+                if track:
+                    if track.get("identity", {}).get("name") in {None, "", "Unknown"}:
+                        track["identity"]["name"] = inferred_name
+                    track["identity"]["status"] = "matched"
+                    enrolled = enroll_identity(job_id, track["track_id"], inferred_name)
+                    track["identity"]["person_id"] = enrolled.get("person_id")
             _publish(job_id, "association.updated", {"association": association})
 
         job_store.update_job(job_id, stage="export", progress=90, artifacts=artifacts)

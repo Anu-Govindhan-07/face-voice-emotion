@@ -85,6 +85,7 @@ Including:
 The identity store lives in `identity_store/identities.json` and acts as a persistent memory layer:
 - Every processed face embedding is stored automatically (even before a name is assigned).
 - If a later upload matches an existing face and that identity has a name, the matched name is rendered in the face-tracking overlay label.
+- The pipeline now also runs ASR and tries to infer spoken self-introductions (for example, "my name is Alice"), then applies the inferred name to the associated face track and persists it in the identity store.
 - Matching is optimized with per-person centroid indexes and an in-memory embedding cache for better throughput on large/high-quality videos.
 
 You can assign or update a name for a detected track:
