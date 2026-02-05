@@ -30,6 +30,7 @@ console = Console()
 app = FastAPI(title="FaceVoice Fusion")
 PREVIEW_FILENAME = "input_video_preview.mp4"
 PREVIEW_COMPATIBLE_EXTENSIONS = {".mp4", ".webm", ".ogg", ".ogv"}
+PREVIEW_TEMP_SUFFIX = ".partial"
 
 
 def _load_ui(job_id: str) -> Path:
@@ -57,12 +58,17 @@ def _preview_path(job_id: str) -> Path:
 def create_preview_video(video_path: Path, preview_path: Path) -> None:
     if preview_path.exists():
         return
+
+    temp_path = preview_path.with_name(f"{preview_path.name}{PREVIEW_TEMP_SUFFIX}")
+    if temp_path.exists():
+        temp_path.unlink()
+
     console.log(f"Creating preview video at {preview_path}")
     try:
         (
             ffmpeg.input(str(video_path))
             .output(
-                str(preview_path),
+                str(temp_path),
                 vcodec="libx264",
                 acodec="aac",
                 movflags="faststart",
@@ -70,8 +76,11 @@ def create_preview_video(video_path: Path, preview_path: Path) -> None:
             .overwrite_output()
             .run(quiet=True)
         )
+        temp_path.replace(preview_path)
     except ffmpeg.Error as exc:
         console.log(f"Failed to create preview video: {exc}")
+        if temp_path.exists():
+            temp_path.unlink()
 
 
 @app.on_event("startup")
