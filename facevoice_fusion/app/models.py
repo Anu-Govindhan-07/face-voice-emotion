@@ -23,7 +23,7 @@ class JobStatusResponse(BaseModel):
 class IdentityEnrollRequest(BaseModel):
     job_id: str
     track_id: str
-    name: str
+    name: Optional[str] = None
 
 
 class IdentityEnrollResponse(BaseModel):
