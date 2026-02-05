@@ -13,7 +13,7 @@ from .diarize import diarize_audio
 from .emotion import infer_emotions
 from .face_detect_track import detect_and_track
 from .face_embed import embed_faces
-from .identity import match_identity
+from .identity import match_identity, remember_identity_embedding
 from .utils import console, load_json, save_json
 
 
@@ -50,6 +50,13 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
             emb_path = embed_paths.get(track["track_id"])
             if emb_path:
                 identity = match_identity(emb_path)
+                remembered = remember_identity_embedding(
+                    track_id=track["track_id"],
+                    embedding_path=emb_path,
+                    person_id=identity.get("person_id"),
+                )
+                if not identity.get("person_id") and remembered.get("person_id"):
+                    identity["person_id"] = remembered["person_id"]
             else:
                 identity = {"status": "unknown", "person_id": None, "name": "Unknown", "score": 0.0}
             track["identity"] = identity

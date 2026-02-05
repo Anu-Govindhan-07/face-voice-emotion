@@ -82,7 +82,12 @@ Including:
 - `ui.json`
 
 ## Identity store
-The identity store lives in `identity_store/identities.json`. You can enroll a track:
+The identity store lives in `identity_store/identities.json` and acts as a persistent memory layer:
+- Every processed face embedding is stored automatically (even before a name is assigned).
+- If a later upload matches an existing face and that identity has a name, the matched name is rendered in the face-tracking overlay label.
+- Matching is optimized with per-person centroid indexes and an in-memory embedding cache for better throughput on large/high-quality videos.
+
+You can assign or update a name for a detected track:
 ```bash
 curl -X POST http://localhost:8000/identity/enroll \
   -H "Content-Type: application/json" \
