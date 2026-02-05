@@ -14,7 +14,7 @@ from .emotion import infer_emotions
 from .face_detect_track import detect_and_track
 from .face_embed import embed_faces
 from .identity import enroll_identity, match_identity, remember_identity_embedding
-from .transcribe import infer_speaker_names, transcribe_audio
+from .transcribe import infer_name_signals, transcribe_audio
 from .utils import console, load_json, save_json
 
 
@@ -97,12 +97,21 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         _publish(job_id, "job.progress", {"stage": "diarize", "progress": 70})
 
         assoc_path = job_file(job_id, "associations.json")
+        name_signals = infer_name_signals(speakers, transcript_segments)
+        speaker_names = name_signals.get("self", {})
         if assoc_path.exists():
             associations = load_json(assoc_path).get("associations", [])
+            if speaker_names:
+                for association in associations:
+                    speaker_id = association.get("speaker_id")
+                    if speaker_id and not association.get("inferred_name"):
+                        association["inferred_name"] = speaker_names.get(speaker_id)
         else:
-            speaker_names = infer_speaker_names(speakers, transcript_segments)
             associations = associate_speakers(tracks, speakers, assoc_path, speaker_names=speaker_names)
         artifacts["associations"] = str(assoc_path)
+        mentioned_name_by_speaker = name_signals.get("mentioned", {})
+        speaker_to_track = {assoc.get("speaker_id"): assoc.get("track_id") for assoc in associations if assoc.get("speaker_id")}
+
         for association in associations:
             inferred_name = association.get("inferred_name")
             if inferred_name:
@@ -113,7 +122,29 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
                     track["identity"]["status"] = "matched"
                     enrolled = enroll_identity(job_id, track["track_id"], inferred_name)
                     track["identity"]["person_id"] = enrolled.get("person_id")
+
+            speaker_id = association.get("speaker_id")
+            mentioned_name = mentioned_name_by_speaker.get(speaker_id)
+            if mentioned_name:
+                association["mentioned_name"] = mentioned_name
+                target_track_id = association.get("track_id")
+                speaker_track_id = speaker_to_track.get(speaker_id)
+                if target_track_id and target_track_id == speaker_track_id:
+                    target_track_id = next((
+                        candidate_track_id
+                        for candidate_speaker_id, candidate_track_id in speaker_to_track.items()
+                        if candidate_speaker_id != speaker_id
+                    ), target_track_id)
+                target_track = next((item for item in tracks if item.get("track_id") == target_track_id), None)
+                if target_track and target_track.get("identity", {}).get("name") in {None, "", "Unknown"}:
+                    target_track["identity"]["name"] = mentioned_name
+                    enrolled = enroll_identity(job_id, target_track["track_id"], mentioned_name)
+                    target_track["identity"]["person_id"] = enrolled.get("person_id")
+                    target_track["identity"]["status"] = "matched"
+
             _publish(job_id, "association.updated", {"association": association})
+
+        save_json(assoc_path, {"associations": associations, "speaker_names": speaker_names})
 
         job_store.update_job(job_id, stage="export", progress=90, artifacts=artifacts)
         _publish(job_id, "job.progress", {"stage": "associate", "progress": 90})
