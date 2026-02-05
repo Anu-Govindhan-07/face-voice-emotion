@@ -94,6 +94,7 @@ class Artifacts(BaseModel):
     diarization: str
     emotions: str
     associations: str
+    transcript: str
 
 
 class VideoInfo(BaseModel):
@@ -107,6 +108,7 @@ class ModelVersions(BaseModel):
     face_embedder: str
     emotion_model: str
     diarization_model: str
+    asr_model: str
 
 
 class UIExport(BaseModel):

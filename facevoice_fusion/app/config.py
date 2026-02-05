@@ -25,10 +25,12 @@ FACE_DETECT_MIN_SIZE = int(os.getenv("FACE_DETECT_MIN_SIZE", "40"))
 
 _raw_emotion_model = os.getenv("EMOTION_MODEL_NAME", "trpakov/vit-face-expression")
 EMOTION_MODEL_NAME = "trpakov/vit-face-expression" if _raw_emotion_model == "nateraw/fer" else _raw_emotion_model
+ASR_MODEL_NAME = os.getenv("ASR_MODEL_NAME", "openai/whisper-tiny.en")
 
 MODEL_VERSIONS = {
     "face_detector": "facenet-pytorch-mtcnn",
     "face_embedder": "facenet-pytorch-inceptionresnetv1",
     "emotion_model": EMOTION_MODEL_NAME,
     "diarization_model": "pyannote-or-fallback",
+    "asr_model": ASR_MODEL_NAME,
 }
