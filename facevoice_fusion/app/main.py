@@ -88,7 +88,7 @@ async def on_startup() -> None:
     ensure_dirs()
     IDENTITY_STORE.parent.mkdir(parents=True, exist_ok=True)
     if not IDENTITY_STORE.exists():
-        IDENTITY_STORE.write_text(json.dumps({"persons": {}, "meta": {"schema_version": 2}}, indent=2))
+        IDENTITY_STORE.write_text(json.dumps({"persons": {}, "meta": {"schema_version": 3}}, indent=2))
 
 
 @app.post("/upload", response_model=UploadResponse)
