@@ -9,6 +9,59 @@ This playbook maps common production failure modes to practical fixes for the cu
 3. **Prefer delayed commitment**: buffer a short temporal window before assigning names.
 4. **Human-in-the-loop for enrollment**: never let low-confidence auto-enrollment poison the identity store.
 
+## Working diagram (speech → name → face → identity store)
+
+```mermaid
+flowchart TD
+    A[Upload video] --> B[Face detect + track]
+    A --> C[Audio extract + diarization]
+    C --> D[ASR transcript + name signals]
+    B --> E[Face embeddings per track]
+    E --> F[Identity store lookup\ncentroid + top vectors]
+    F --> G{Score vs thresholds}
+    G -->|>= match| H[matched]
+    G -->|>= maybe| I[maybe]
+    G -->|below maybe| J[unknown]
+    D --> K[Self-name vs mentioned-name parsing]
+    C --> L[Speaker segments]
+    B --> M[Track timelines]
+    K --> N[Speaker↔Face association\noverlap + confidence]
+    L --> N
+    M --> N
+    H --> O[UI labels + timeline]
+    I --> O
+    J --> O
+    N --> O
+    O --> P{Human confirms enrollment?}
+    P -->|Yes| Q[Write vector to identity store]
+    P -->|No| R[Keep provisional label]
+    Q --> F
+```
+
+## How the identity store works
+
+1. **Track embedding creation**
+   - For each face track (`track_id`), the pipeline saves an embedding vector in the job artifacts.
+
+2. **Identity matching (read path)**
+   - The matcher loads known identities from `identity_store/identities.json`.
+   - Each person has a stable `person_id`, optional `name`, and multiple stored `face_vectors`.
+   - A `face_index.centroid` is used for fast first-pass retrieval, then top candidates are refined against raw vectors.
+   - Decision outputs are thresholded into `matched`, `maybe`, or `unknown` (never name by force).
+
+3. **Remembering embeddings (provisional memory)**
+   - New track vectors can be attached to a person bucket so the system keeps continuity between nearby tracks/videos.
+   - This should remain provisional unless confidence and workflow policy allow confirmation.
+
+4. **Enrollment (write path)**
+   - On confirmed identity, the embedding path is appended to that `person_id` in the store.
+   - If no person exists, a new `person_id` is created; if name exists, it is updated/retained.
+   - Person index (`centroid`, count, updated timestamp) is rebuilt and persisted.
+
+5. **Why mistakes persist if not controlled**
+   - If a wrong enrollment is written, future nearest-neighbor matching can repeatedly return that wrong person.
+   - Mitigate with human confirmation, rollback tooling, strict quality gates, and `maybe` handling.
+
 ## Issue-by-issue mitigations
 
 ### 1) Name mentioned but the person is not in the video
