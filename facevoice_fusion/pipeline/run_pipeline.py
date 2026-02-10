@@ -15,7 +15,7 @@ from .emotion import infer_emotions
 from .face_detect_track import detect_and_track
 from .face_embed import embed_faces
 from .identity import enroll_identity, match_identity, remember_identity_embedding
-from .transcribe import infer_name_signals, transcribe_audio
+from .transcribe import attribute_speakers_to_segments, infer_name_signals, transcribe_audio
 from .utils import console, load_json, save_json
 
 
@@ -159,6 +159,8 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
             transcript_segments = load_json(transcript_path).get("segments", [])
         else:
             transcript_segments = transcribe_audio(audio_path, transcript_path)
+        transcript_segments = attribute_speakers_to_segments(speakers, transcript_segments)
+        save_json(transcript_path, {"segments": transcript_segments})
         artifacts["transcript"] = str(transcript_path)
 
         job_store.update_job(job_id, stage="associate", progress=70, artifacts=artifacts)
