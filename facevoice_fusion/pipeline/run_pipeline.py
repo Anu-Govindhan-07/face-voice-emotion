@@ -121,7 +121,18 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
                     if track.get("identity", {}).get("name") in {None, "", "Unknown"}:
                         track["identity"]["name"] = inferred_name
                     track["identity"]["status"] = "matched"
-                    enrolled = enroll_identity(job_id, track["track_id"], inferred_name)
+                    enrolled = enroll_identity(
+                        job_id,
+                        track["track_id"],
+                        inferred_name,
+                        association={
+                            "job_id": job_id,
+                            "track_id": track.get("track_id"),
+                            "speaker_id": association.get("speaker_id"),
+                            "name": inferred_name,
+                            "source": "speaker_self_identification",
+                        },
+                    )
                     track["identity"]["person_id"] = enrolled.get("person_id")
 
             speaker_id = association.get("speaker_id")
