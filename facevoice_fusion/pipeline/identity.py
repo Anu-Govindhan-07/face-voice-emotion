@@ -175,11 +175,16 @@ def match_identity(embedding_path: Path) -> Dict[str, str | float | None]:
     elif best_score >= FACE_MAYBE_THRESHOLD:
         status = "maybe"
 
+    resolved_person_id = best_person_id if status == "matched" else None
+    resolved_name = best_name if resolved_person_id else "Unknown"
+
     return {
         "status": status,
-        "person_id": best_person_id,
-        "name": best_name if best_person_id else "Unknown",
+        "person_id": resolved_person_id,
+        "name": resolved_name,
         "score": float(best_score if best_score > 0 else 0.0),
+        "candidate_person_id": best_person_id,
+        "candidate_name": best_name if best_person_id else "Unknown",
     }
 
 
@@ -187,11 +192,14 @@ def remember_identity_embedding(
     track_id: str,
     embedding_path: Path,
     person_id: Optional[str] = None,
+    allow_create: bool = False,
 ) -> Dict[str, Optional[str]]:
     store = _load_store()
     persons = store.setdefault("persons", {})
     now = datetime.utcnow().isoformat()
     selected_person_id = person_id
+    if selected_person_id is None and not allow_create:
+        return {"person_id": None, "name": None}
     if selected_person_id is None:
         selected_person_id = f"p_{len(persons) + 1:03d}"
         persons[selected_person_id] = {"name": None, "face_vectors": [], "associations": []}

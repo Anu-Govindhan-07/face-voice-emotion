@@ -15,12 +15,15 @@ _SELF_IDENTIFICATION_PATTERNS = [
     re.compile(rf"\bi['’]?m\s+{_NAME_TOKEN}\b", re.IGNORECASE),
     re.compile(rf"\bjag heter\s+{_NAME_TOKEN}\b", re.IGNORECASE),
     re.compile(rf"\bmitt namn är\s+{_NAME_TOKEN}\b", re.IGNORECASE),
+    re.compile(rf"\bich bin\s+{_NAME_TOKEN}\b", re.IGNORECASE),
+    re.compile(rf"\bdas bin ich[,\s]+{_NAME_TOKEN}\b", re.IGNORECASE),
+    re.compile(rf"\b(?:ueber|über) mich[,\s]+{_NAME_TOKEN}\b", re.IGNORECASE),
 ]
 
 _MENTION_PATTERNS = [
-    re.compile(rf"\b(?:this is|that is|it's|it is|det här är|detta är|där är)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\b(?:he is|she is|han är|hon är)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\b(?:called|named|heter)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
+    re.compile(rf"\b(?:this is|that is|it's|it is|det här är|detta är|där är|das ist)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
+    re.compile(rf"\b(?:he is|she is|han är|hon är|er ist|sie ist)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
+    re.compile(rf"\b(?:called|named|heter|heisst|heißt)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
 ]
 
 _STOPWORDS = {
@@ -112,18 +115,36 @@ def _best_speaker_for_segment(speakers: List[dict], segment: dict) -> Optional[s
     return best_speaker_id
 
 
+def attribute_speakers_to_segments(speakers: List[dict], transcript_segments: List[dict]) -> List[dict]:
+    attributed: List[dict] = []
+    for segment in transcript_segments:
+        enriched = dict(segment)
+        speaker_id = enriched.get("speaker_id") or _best_speaker_for_segment(speakers, enriched)
+        if speaker_id:
+            enriched["speaker_id"] = speaker_id
+        attributed.append(enriched)
+    return attributed
+
+
 def infer_name_signals(speakers: List[dict], transcript_segments: List[dict]) -> Dict[str, Dict[str, str]]:
     speaker_self_names: Dict[str, str] = {}
     speaker_mentioned_names: Dict[str, str] = {}
     mention_votes: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    latest_segment_by_speaker: Dict[str, dict] = {}
 
     for segment in transcript_segments:
         segment_text = segment.get("text", "")
         if not segment_text:
             continue
-        owner_speaker_id = _best_speaker_for_segment(speakers, segment)
+        owner_speaker_id = segment.get("speaker_id") or _best_speaker_for_segment(speakers, segment)
         if not owner_speaker_id:
             continue
+        latest_segment_by_speaker[owner_speaker_id] = {
+            "start": float(segment.get("start", 0.0)),
+            "end": float(segment.get("end", segment.get("start", 0.0))),
+            "mid": (float(segment.get("start", 0.0)) + float(segment.get("end", segment.get("start", 0.0)))) / 2.0,
+            "text": segment_text,
+        }
 
         self_name = _extract_self_identification_name(segment_text)
         if self_name:
@@ -141,4 +162,5 @@ def infer_name_signals(speakers: List[dict], transcript_segments: List[dict]) ->
     return {
         "self": speaker_self_names,
         "mentioned": speaker_mentioned_names,
+        "speaker_segments": latest_segment_by_speaker,
     }
