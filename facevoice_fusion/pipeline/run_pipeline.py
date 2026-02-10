@@ -114,13 +114,16 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
             emb_path = embed_paths.get(track["track_id"])
             if emb_path:
                 identity = match_identity(emb_path)
-                remembered = remember_identity_embedding(
-                    track_id=track["track_id"],
-                    embedding_path=emb_path,
-                    person_id=identity.get("person_id"),
-                )
-                if not identity.get("person_id") and remembered.get("person_id"):
-                    identity["person_id"] = remembered["person_id"]
+                if identity.get("status") == "matched" and identity.get("person_id"):
+                    remember_identity_embedding(
+                        track_id=track["track_id"],
+                        embedding_path=emb_path,
+                        person_id=identity.get("person_id"),
+                        allow_create=False,
+                    )
+                else:
+                    identity["person_id"] = None
+                    identity["name"] = "Anonymous"
             else:
                 identity = {"status": "unknown", "person_id": None, "name": "Anonymous", "score": 0.0}
             track["identity"] = identity
@@ -129,7 +132,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
                 _append_identity_label(track, track["identity"]["name"], 0.0, "identity_store", confidence=track["identity"].get("score", 1.0))
             else:
                 _append_identity_label(track, "Anonymous", 0.0, "default")
-            _publish(job_id, "track.identity", {"track_id": track["track_id"], "identity": identity})
+            _publish(job_id, "track.identity", {"track_id": track["track_id"], "identity": track["identity"]})
 
         job_store.update_job(job_id, stage="emotion", progress=50, artifacts=artifacts)
         _publish(job_id, "job.progress", {"stage": "identity", "progress": 50})
@@ -187,7 +190,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
             inferred_name = association.get("inferred_name")
             if inferred_name and ALLOW_TRANSCRIPT_IDENTITY_ENROLL:
                 track = _find_track(tracks, association.get("track_id"))
-                if track:
+                if track and track.get("identity", {}).get("name") in {None, "", "Unknown", "Anonymous", inferred_name}:
                     _append_identity_label(track, inferred_name, max(0.0, float(track.get("start", 0.0))), "self_identification")
                     track["identity"]["status"] = "matched"
                     enrolled = enroll_identity(
@@ -217,7 +220,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
                         speaker_track_id=speaker_track_id,
                         utterance_midpoint=utterance_midpoint,
                     )
-                    if target_track:
+                    if target_track and target_track.get("identity", {}).get("name") in {None, "", "Unknown", "Anonymous"}:
                         _append_identity_label(target_track, mentioned_name, utterance_midpoint, "mentioned_by_speaker")
                         enrolled = enroll_identity(job_id, target_track["track_id"], mentioned_name)
                         target_track["identity"]["person_id"] = enrolled.get("person_id")
