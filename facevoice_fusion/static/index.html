@@ -429,7 +429,7 @@
         const confLabel = dominantConf ? ` (${Math.round(dominantConf * 100)}%)` : '';
         const association = getBestAssociation(merged.track_id);
         const speakerLabel = association?.speaker_id || 'S?';
-        const identityLabel = merged.identity?.name || 'Unknown';
+        const identityLabel = merged.identity?.name || 'Anonymous';
         const text = `${merged.track_id} · ${speakerLabel} · ${identityLabel} · ${dominantLabelValue}${confLabel}`;
         if (existing) {
           existing.innerText = text;
@@ -496,6 +496,22 @@
         return uiData?.tracks || [];
       }
 
+
+      function getIdentityLabelAtTime(identity, time) {
+        if (!identity) {
+          return 'Anonymous';
+        }
+        const timeline = Array.isArray(identity.label_timeline) ? [...identity.label_timeline] : [];
+        timeline.sort((a, b) => (a.start || 0) - (b.start || 0));
+        let label = timeline.length ? timeline[0].name || 'Anonymous' : identity.name || 'Anonymous';
+        for (const entry of timeline) {
+          if ((entry.start || 0) <= time && entry.name) {
+            label = entry.name;
+          }
+        }
+        return label || 'Anonymous';
+      }
+
       function findEmotionAtTime(timeline, time) {
         if (!Array.isArray(timeline)) {
           return null;
@@ -533,7 +549,7 @@
             continue;
           }
           overlayCtx.strokeRect(box.x, box.y, box.w, box.h);
-          const identityLabel = track.identity?.name || track.track_id;
+          const identityLabel = getIdentityLabelAtTime(track.identity, currentTime) || track.track_id;
           const emotionEntry = findEmotionAtTime(track.emotion?.timeline, currentTime);
           const emotionLabel = emotionEntry?.label || track.emotion?.dominant || 'neutral';
           const emotionConf = emotionEntry?.conf || 0;
@@ -629,7 +645,7 @@
         associations.forEach((assoc) => {
           const item = document.createElement('li');
           const track = tracks.find((entry) => entry.track_id === assoc.track_id);
-          const identityLabel = track?.identity?.name || 'Unknown';
+          const identityLabel = track?.identity?.name || 'Anonymous';
           const confLabel = assoc.confidence ? `${Math.round(assoc.confidence * 100)}%` : '—';
           item.textContent = `${assoc.speaker_id} → ${assoc.track_id} (${identityLabel}) · ${confLabel}`;
           associationList.appendChild(item);
@@ -638,7 +654,7 @@
 
       function updateSummary(tracks, speakers, associations) {
         const identityNames = new Set(
-          tracks.map((track) => track.identity?.name).filter((name) => name && name !== 'Unknown'),
+          tracks.map((track) => track.identity?.name).filter((name) => name && name !== 'Unknown' && name !== 'Anonymous'),
         );
         const tracksWithEmotion = tracks.filter(
           (track) => track.emotion?.dominant || (track.emotion?.timeline || []).length,
