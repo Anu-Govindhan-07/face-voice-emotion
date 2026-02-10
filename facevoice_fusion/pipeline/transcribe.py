@@ -116,6 +116,7 @@ def infer_name_signals(speakers: List[dict], transcript_segments: List[dict]) ->
     speaker_self_names: Dict[str, str] = {}
     speaker_mentioned_names: Dict[str, str] = {}
     mention_votes: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    latest_segment_by_speaker: Dict[str, dict] = {}
 
     for segment in transcript_segments:
         segment_text = segment.get("text", "")
@@ -124,6 +125,12 @@ def infer_name_signals(speakers: List[dict], transcript_segments: List[dict]) ->
         owner_speaker_id = _best_speaker_for_segment(speakers, segment)
         if not owner_speaker_id:
             continue
+        latest_segment_by_speaker[owner_speaker_id] = {
+            "start": float(segment.get("start", 0.0)),
+            "end": float(segment.get("end", segment.get("start", 0.0))),
+            "mid": (float(segment.get("start", 0.0)) + float(segment.get("end", segment.get("start", 0.0)))) / 2.0,
+            "text": segment_text,
+        }
 
         self_name = _extract_self_identification_name(segment_text)
         if self_name:
@@ -141,4 +148,5 @@ def infer_name_signals(speakers: List[dict], transcript_segments: List[dict]) ->
     return {
         "self": speaker_self_names,
         "mentioned": speaker_mentioned_names,
+        "speaker_segments": latest_segment_by_speaker,
     }
