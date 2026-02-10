@@ -207,3 +207,43 @@ flowchart TD
 - Per-language ASR word error rate for names.
 
 These metrics should drive threshold updates and model iteration cadence.
+
+## Final name detection + face tagging stage
+
+The pipeline now includes a final assignment pass (`src/name_tagging/final_name_assignment.py`) that executes after diarization/transcription and identity matching.
+
+### Inputs
+- `job_id`
+- face tracks (`track_id`, time range, and bbox timeline)
+- diarized + attributed transcript segments (`speaker_id`, `start/end`, `transcript_text`)
+- optional active-speaker scores (ASD)
+- identity store interface (`match`, `enroll`)
+
+### Output schema (`data/jobs/<job_id>/associations.json`)
+- `tracks`: final label entries per face track
+  - `track_id`
+  - `label` (`Name` or `Unknown`)
+  - `label_source` (`identity_store`, `self_intro`, `mention`, `manual`, `none`)
+  - `confidence`
+  - `first_seen_ts`
+  - optional metadata for maybe-candidates
+- `event_log`: assignment audit trail (`self_intro`, `mention`, `match`, conflicts, unresolved events)
+
+### Decision policy
+1. **Identity store first**
+   - `matched` + score above threshold → label by known identity.
+   - `maybe` → UI stays `Unknown`, candidate stored as metadata only.
+2. **Self-introductions** (`I'm X`, `my name is X`, `jag heter X`, `mitt namn är X`)
+   - assign only to the speaking face track.
+   - use ASD when available; fallback uses on-screen overlap + bbox area.
+   - low-confidence cases become `unresolved_self_intro` events (no forced label).
+3. **Mentioned names** (`this is X`, `det här är X`, etc.)
+   - prefer non-speaker visible candidates near mention time.
+   - rank by temporal presence, recent appearance, and face size.
+   - unresolved/ambiguous mentions stay unassigned and are logged.
+4. **Safety + persistence**
+   - labels stay stable per track; higher-confidence labels win conflicts.
+   - auto-enrollment is allowed only for high-confidence self-intros with enough face frames.
+   - mention-based enrollment is blocked.
+
+This stage keeps UI labels conservative and stable (`Unknown` when uncertain) while still improving cross-video recognition as self-introductions are confirmed.
