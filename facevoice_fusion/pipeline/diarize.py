@@ -20,15 +20,19 @@ def diarize_audio(audio_path: Path, output_path: Path) -> List[dict]:
 
             pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=HUGGINGFACE_TOKEN)
             diar = pipeline(str(audio_path))
-            idx = 1
-            for turn, _, _ in diar.itertracks(yield_label=True):
+            speaker_map = {}
+            next_idx = 1
+            for turn, _, label in diar.itertracks(yield_label=True):
+                if label not in speaker_map:
+                    speaker_map[label] = f"S{next_idx}"
+                    next_idx += 1
                 diarization.append({
-                    "speaker_id": f"S{idx}",
+                    "speaker_id": speaker_map[label],
                     "start": float(turn.start),
                     "end": float(turn.end),
                     "conf": 0.9,
                 })
-                idx += 1
+            diarization.sort(key=lambda seg: (float(seg["start"]), float(seg["end"])))
         except ImportError:
             console.log("Pyannote is not installed; falling back to single-speaker diarization.")
         except Exception as exc:

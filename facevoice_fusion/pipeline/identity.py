@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from app.config import FACE_MATCH_THRESHOLD, FACE_MAYBE_THRESHOLD, IDENTITY_STORE
+from app.config import FACE_MATCH_MARGIN, FACE_MATCH_THRESHOLD, FACE_MAYBE_THRESHOLD, IDENTITY_STORE
 from .utils import console
 
 _embedding_cache: Dict[str, Tuple[float, np.ndarray]] = {}
@@ -134,6 +134,7 @@ def match_identity(embedding_path: Path) -> Dict[str, str | float | None]:
     best_person_id = None
     best_name = "Unknown"
     candidate_ids: List[str] = []
+    person_best_scores: Dict[str, float] = {}
 
     for person_id, person in store.get("persons", {}).items():
         centroid_values = person.get("face_index", {}).get("centroid")
@@ -142,6 +143,7 @@ def match_identity(embedding_path: Path) -> Dict[str, str | float | None]:
         centroid = np.array(centroid_values, dtype=np.float32)
         score = _cosine_similarity(embedding, centroid)
         candidate_ids.append(person_id)
+        person_best_scores[person_id] = max(person_best_scores.get(person_id, -1.0), score)
         if score > best_score:
             best_score = score
             best_person_id = person_id
@@ -164,22 +166,35 @@ def match_identity(embedding_path: Path) -> Dict[str, str | float | None]:
                 if vec is None:
                     continue
                 score = _cosine_similarity(embedding, vec)
+                person_best_scores[person_id] = max(person_best_scores.get(person_id, -1.0), score)
                 if score > best_score:
                     best_score = score
                     best_person_id = person_id
                     best_name = person.get("name") or _infer_name_from_associations(person) or "Unknown"
 
+    ranked_scores = sorted(person_best_scores.items(), key=lambda item: item[1], reverse=True)
+    top_score = ranked_scores[0][1] if ranked_scores else -1.0
+    second_score = ranked_scores[1][1] if len(ranked_scores) > 1 else -1.0
+    margin = top_score - second_score if second_score >= 0 else 1.0
+
     status = "unknown"
-    if best_score >= FACE_MATCH_THRESHOLD:
+    if top_score >= FACE_MATCH_THRESHOLD and margin >= FACE_MATCH_MARGIN:
         status = "matched"
-    elif best_score >= FACE_MAYBE_THRESHOLD:
+    elif top_score >= FACE_MAYBE_THRESHOLD:
         status = "maybe"
+
+    resolved_person_id = best_person_id if status == "matched" else None
+    resolved_name = best_name if resolved_person_id else "Unknown"
 
     return {
         "status": status,
-        "person_id": best_person_id,
-        "name": best_name if best_person_id else "Unknown",
+        "person_id": resolved_person_id,
+        "name": resolved_name,
         "score": float(best_score if best_score > 0 else 0.0),
+        "candidate_person_id": best_person_id,
+        "candidate_name": best_name if best_person_id else "Unknown",
+        "candidate_score": float(top_score if top_score > 0 else 0.0),
+        "candidate_margin": float(margin if margin > 0 else 0.0),
     }
 
 
@@ -187,11 +202,14 @@ def remember_identity_embedding(
     track_id: str,
     embedding_path: Path,
     person_id: Optional[str] = None,
+    allow_create: bool = False,
 ) -> Dict[str, Optional[str]]:
     store = _load_store()
     persons = store.setdefault("persons", {})
     now = datetime.utcnow().isoformat()
     selected_person_id = person_id
+    if selected_person_id is None and not allow_create:
+        return {"person_id": None, "name": None}
     if selected_person_id is None:
         selected_person_id = f"p_{len(persons) + 1:03d}"
         persons[selected_person_id] = {"name": None, "face_vectors": [], "associations": []}
@@ -211,6 +229,7 @@ def enroll_identity(
     track_id: str,
     name: Optional[str] = None,
     association: Optional[Dict] = None,
+    merge_by_name: bool = False,
 ) -> Dict[str, str]:
     store = _load_store()
     persons = store.setdefault("persons", {})
@@ -223,7 +242,7 @@ def enroll_identity(
             matched_person_id = matched.get("person_id")
 
     person_id = matched_person_id
-    if person_id is None and name:
+    if person_id is None and name and merge_by_name:
         for pid, person in persons.items():
             if person.get("name") == name:
                 person_id = pid
