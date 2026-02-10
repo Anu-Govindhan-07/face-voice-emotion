@@ -7,6 +7,7 @@ from typing import Dict, List
 from app.events import broadcaster
 from app.jobs import job_store
 from app.storage import job_file
+from app.config import ALLOW_TRANSCRIPT_IDENTITY_ENROLL
 from .associate import associate_speakers
 from .audio_extract import extract_audio
 from .diarize import diarize_audio
@@ -114,7 +115,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
 
         for association in associations:
             inferred_name = association.get("inferred_name")
-            if inferred_name:
+            if inferred_name and ALLOW_TRANSCRIPT_IDENTITY_ENROLL:
                 track = next((item for item in tracks if item.get("track_id") == association.get("track_id")), None)
                 if track:
                     if track.get("identity", {}).get("name") in {None, "", "Unknown"}:
@@ -127,20 +128,21 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
             mentioned_name = mentioned_name_by_speaker.get(speaker_id)
             if mentioned_name:
                 association["mentioned_name"] = mentioned_name
-                target_track_id = association.get("track_id")
-                speaker_track_id = speaker_to_track.get(speaker_id)
-                if target_track_id and target_track_id == speaker_track_id:
-                    target_track_id = next((
-                        candidate_track_id
-                        for candidate_speaker_id, candidate_track_id in speaker_to_track.items()
-                        if candidate_speaker_id != speaker_id
-                    ), target_track_id)
-                target_track = next((item for item in tracks if item.get("track_id") == target_track_id), None)
-                if target_track and target_track.get("identity", {}).get("name") in {None, "", "Unknown"}:
-                    target_track["identity"]["name"] = mentioned_name
-                    enrolled = enroll_identity(job_id, target_track["track_id"], mentioned_name)
-                    target_track["identity"]["person_id"] = enrolled.get("person_id")
-                    target_track["identity"]["status"] = "matched"
+                if ALLOW_TRANSCRIPT_IDENTITY_ENROLL:
+                    target_track_id = association.get("track_id")
+                    speaker_track_id = speaker_to_track.get(speaker_id)
+                    if target_track_id and target_track_id == speaker_track_id:
+                        target_track_id = next((
+                            candidate_track_id
+                            for candidate_speaker_id, candidate_track_id in speaker_to_track.items()
+                            if candidate_speaker_id != speaker_id
+                        ), target_track_id)
+                    target_track = next((item for item in tracks if item.get("track_id") == target_track_id), None)
+                    if target_track and target_track.get("identity", {}).get("name") in {None, "", "Unknown"}:
+                        target_track["identity"]["name"] = mentioned_name
+                        enrolled = enroll_identity(job_id, target_track["track_id"], mentioned_name)
+                        target_track["identity"]["person_id"] = enrolled.get("person_id")
+                        target_track["identity"]["status"] = "matched"
 
             _publish(job_id, "association.updated", {"association": association})
 

@@ -253,3 +253,9 @@ Structured into four blocks:
 4. Panels are refreshed from final payload (`tracks`, `speakers`, `associations`).
 5. During playback, canvas overlay continuously renders time-aligned face boxes and emotion labels.
 
+## 10) Reliability troubleshooting playbook
+
+For detailed mitigation strategies covering speech→name→face tagging edge cases (off-screen speakers, ambiguous targets, diarization/ASR noise, tracking ID switches, threshold calibration, and UI uncertainty handling), see:
+
+- `docs/SPEECH_NAME_FACE_TAGGING_PLAYBOOK.md`
+
