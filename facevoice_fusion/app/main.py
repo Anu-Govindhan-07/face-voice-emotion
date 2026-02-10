@@ -144,7 +144,7 @@ async def get_events(job_id: str) -> StreamingResponse:
 
 @app.post("/identity/enroll", response_model=IdentityEnrollResponse)
 async def identity_enroll(payload: IdentityEnrollRequest) -> IdentityEnrollResponse:
-    result = enroll_identity(payload.job_id, payload.track_id, payload.name)
+    result = enroll_identity(payload.job_id, payload.track_id, payload.name, merge_by_name=True)
     return IdentityEnrollResponse(person_id=result["person_id"], name=result["name"])
 
 
