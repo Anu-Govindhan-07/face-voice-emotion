@@ -53,6 +53,7 @@ _DEFAULT_CONFIG = {
     "MAYBE_THRESHOLD": 0.35,
     "MIN_ASSIGN_CONFIDENCE": 0.70,
     "TEMPORAL_WINDOW_SECONDS": 5.0,
+    "SPEAKER_HINT_CONFIDENCE": 0.82,
 }
 
 
@@ -194,15 +195,16 @@ def enroll_identity(
 
     identity["embedding_files"].append(str(emb_rel))
     identity["last_seen_at"] = now
-    source_row = {
-        "embedding_id": emb_id,
-        "job_id": metadata.get("job_id"),
-        "track_id": metadata.get("track_id"),
-        "timestamp": metadata.get("timestamp"),
-        "confidence": metadata.get("confidence"),
-        "source": metadata.get("source", "self_intro"),
-    }
-    identity["sources"].append(source_row)
+    identity["sources"].append(
+        {
+            "embedding_id": emb_id,
+            "job_id": metadata.get("job_id"),
+            "track_id": metadata.get("track_id"),
+            "timestamp": metadata.get("timestamp"),
+            "confidence": metadata.get("confidence"),
+            "source": metadata.get("source", "self_intro"),
+        }
+    )
 
     save_identity_store(loaded_store, identity_store_dir=identity_store_dir)
     return {"identity_id": identity["identity_id"], "name": identity["name"], "embedding_file": str(emb_rel)}
@@ -236,12 +238,49 @@ def match_identity(
     if best is None:
         return {"status": "unknown", "score": 0.0, "identity_id": None, "name": "Unknown"}
 
-    score = float(best["score"])
-    if score >= float(cfg["MATCH_THRESHOLD"]):
+    if best["score"] >= float(cfg["MATCH_THRESHOLD"]):
         return {"status": "matched", **best}
-    if score >= float(cfg["MAYBE_THRESHOLD"]):
+    if best["score"] >= float(cfg["MAYBE_THRESHOLD"]):
         return {"status": "maybe", **best}
-    return {"status": "unknown", "score": score, "identity_id": None, "name": "Unknown"}
+    return {"status": "unknown", "score": float(best["score"]), "identity_id": None, "name": "Unknown"}
+
+
+def _build_speaker_track_hints(
+    face_tracks: List[Dict[str, Any]], diarized_segments: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    """Infer a stable speaker->track map from full timeline overlap when ASD is unavailable."""
+    by_speaker: Dict[str, Dict[str, float]] = {}
+    for segment in diarized_segments:
+        speaker_id = str(segment.get("speaker_id") or "")
+        if not speaker_id:
+            continue
+        seg_start = float(segment.get("start_ts", segment.get("start", 0.0)))
+        seg_end = float(segment.get("end_ts", segment.get("end", seg_start)))
+        if seg_end <= seg_start:
+            continue
+
+        max_area = max((_average_area(track, seg_start, seg_end) for track in face_tracks), default=1.0) or 1.0
+        scores = by_speaker.setdefault(speaker_id, {})
+        for track in face_tracks:
+            track_id = track.get("track_id")
+            if not track_id:
+                continue
+            overlap = _window_overlap(_track_start(track), _track_end(track), seg_start, seg_end)
+            if overlap <= 0:
+                continue
+            area_score = _average_area(track, seg_start, seg_end) / max_area
+            scores[track_id] = scores.get(track_id, 0.0) + (overlap * (1.0 + 0.3 * area_score))
+
+    hints: Dict[str, Dict[str, Any]] = {}
+    for speaker_id, scores in by_speaker.items():
+        if not scores:
+            continue
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        top_track, top_score = ranked[0]
+        total = sum(scores.values()) or 1.0
+        confidence = top_score / total
+        hints[speaker_id] = {"track_id": top_track, "confidence": confidence}
+    return hints
 
 
 def _resolve_speaker_track(
@@ -345,14 +384,7 @@ def assign_name_to_track(
     if current["label"] == name:
         current["confidence"] = max(current["confidence"], confidence)
     else:
-        current.update(
-            {
-                "label": name,
-                "label_source": label_source,
-                "confidence": confidence,
-                "notes": notes,
-            }
-        )
+        current.update({"label": name, "label_source": label_source, "confidence": confidence, "notes": notes})
     event_log.append({**event_payload, "track_id": track_id, "confidence": confidence, "notes": notes})
     return True
 
@@ -372,52 +404,23 @@ def run_final_name_tagging(
     store = load_identity_store(identity_store_dir)
     assignments: Dict[str, Dict[str, Any]] = {}
     events: List[Dict[str, Any]] = []
+    speaker_hints = _build_speaker_track_hints(face_tracks, diarized_segments) if not asd else {}
 
     for track in face_tracks:
         track_id = track.get("track_id")
         if not track_id:
             continue
         emb_path = Path("data") / "jobs" / job_id / "embeddings" / "face" / f"{track_id}.npy"
-        payload = {
-            "track_id": track_id,
-            "label": "Unknown",
-            "label_source": "none",
-            "confidence": 0.0,
-            "identity_id": None,
-            "notes": "no_match",
-        }
+        payload = {"track_id": track_id, "label": "Unknown", "label_source": "none", "confidence": 0.0, "identity_id": None, "notes": "no_match"}
         if emb_path.exists():
             match = match_identity(np.load(emb_path), store, identity_store_dir=identity_store_dir, config=cfg)
             status = match["status"]
             if status == "matched":
-                payload.update(
-                    {
-                        "label": match["name"],
-                        "label_source": "identity_store",
-                        "confidence": match["score"],
-                        "identity_id": match["identity_id"],
-                        "notes": "matched",
-                    }
-                )
+                payload.update({"label": match["name"], "label_source": "identity_store", "confidence": match["score"], "identity_id": match["identity_id"], "notes": "matched"})
             elif status == "maybe":
                 payload["notes"] = "maybe_match"
-                payload["candidate_suggestions"] = [
-                    {
-                        "identity_id": match["identity_id"],
-                        "name": match["name"],
-                        "score": match["score"],
-                    }
-                ]
-            events.append(
-                {
-                    "type": "embedding_match",
-                    "track_id": track_id,
-                    "status": status,
-                    "score": match["score"],
-                    "identity_id": match.get("identity_id"),
-                    "name": match.get("name"),
-                }
-            )
+                payload["candidate_suggestions"] = [{"identity_id": match["identity_id"], "name": match["name"], "score": match["score"]}]
+            events.append({"type": "embedding_match", "track_id": track_id, "status": status, "score": match["score"], "identity_id": match.get("identity_id"), "name": match.get("name")})
         assignments[track_id] = payload
 
     segments = sorted(diarized_segments, key=lambda seg: float(seg.get("start_ts", seg.get("start", 0.0))))
@@ -428,82 +431,52 @@ def run_final_name_tagging(
         seg_start = float(segment.get("start_ts", segment.get("start", 0.0)))
         seg_end = float(segment.get("end_ts", segment.get("end", seg_start)))
         seg_mid = (seg_start + seg_end) / 2.0
-        speaker_id = segment.get("speaker_id")
+        speaker_id = str(segment.get("speaker_id") or "")
         names = parse_names_from_transcript(text)
 
         for name in names["self_names"]:
             track_id, confidence, reason = _resolve_speaker_track(face_tracks, seg_start, seg_end, asd)
-            event_base = {
-                "type": "self_intro",
-                "speaker_id": speaker_id,
-                "name": name,
-                "segment_start": seg_start,
-                "segment_end": seg_end,
-            }
+            hint = speaker_hints.get(speaker_id)
+            if (not track_id or confidence < float(cfg["MIN_ASSIGN_CONFIDENCE"])) and hint and hint["confidence"] >= float(cfg["SPEAKER_HINT_CONFIDENCE"]):
+                track_id = hint["track_id"]
+                confidence = max(confidence, min(0.95, hint["confidence"]))
+                reason = "speaker_timeline_hint"
+
+            event_base = {"type": "self_intro", "speaker_id": speaker_id or None, "name": name, "segment_start": seg_start, "segment_end": seg_end}
             if not track_id or confidence < float(cfg["MIN_ASSIGN_CONFIDENCE"]):
                 events.append({**event_base, "track_id": None, "confidence": confidence, "notes": "unresolved_self_intro"})
                 continue
 
-            if assign_name_to_track(
-                assignments,
-                track_id,
-                name,
-                "self_intro",
-                confidence,
-                reason,
-                events,
-                event_base,
-            ):
+            if assign_name_to_track(assignments, track_id, name, "self_intro", confidence, reason, events, event_base):
                 emb_path = Path("data") / "jobs" / job_id / "embeddings" / "face" / f"{track_id}.npy"
                 if emb_path.exists():
-                    enroll_result = enroll_identity(
+                    enrolled = enroll_identity(
                         name,
                         np.load(emb_path),
-                        {
-                            "job_id": job_id,
-                            "track_id": track_id,
-                            "timestamp": seg_mid,
-                            "confidence": confidence,
-                            "source": "self_intro",
-                        },
+                        {"job_id": job_id, "track_id": track_id, "timestamp": seg_mid, "confidence": confidence, "source": "self_intro"},
                         identity_store_dir=identity_store_dir,
                         store=store,
                     )
-                    assignments[track_id]["identity_id"] = enroll_result["identity_id"]
+                    assignments[track_id]["identity_id"] = enrolled["identity_id"]
 
         for name in names["mentioned_names"]:
             speaker_track_id, _, _ = _resolve_speaker_track(face_tracks, seg_start, seg_end, asd)
+            hint = speaker_hints.get(speaker_id)
+            if hint and hint["confidence"] >= float(cfg["SPEAKER_HINT_CONFIDENCE"]):
+                speaker_track_id = hint["track_id"]
             track_id, confidence, reason = _resolve_mention_track(
                 face_tracks,
                 mention_ts=seg_mid,
                 speaker_track_id=speaker_track_id,
                 temporal_window_seconds=float(cfg["TEMPORAL_WINDOW_SECONDS"]),
             )
-            event_base = {
-                "type": "mention",
-                "speaker_id": speaker_id,
-                "name": name,
-                "segment_start": seg_start,
-                "segment_end": seg_end,
-            }
+            event_base = {"type": "mention", "speaker_id": speaker_id or None, "name": name, "segment_start": seg_start, "segment_end": seg_end}
             if not track_id or confidence < float(cfg["MIN_ASSIGN_CONFIDENCE"]):
                 events.append({**event_base, "track_id": None, "confidence": confidence, "notes": reason})
                 continue
-            assign_name_to_track(
-                assignments,
-                track_id,
-                name,
-                "mention",
-                confidence,
-                reason,
-                events,
-                event_base,
-            )
+            assign_name_to_track(assignments, track_id, name, "mention", confidence, reason, events, event_base)
 
-    result = {
-        "tracks": list(assignments.values()),
-        "event_log": events,
-    }
+    result = {"tracks": list(assignments.values()), "event_log": events}
     out_path = Path("data") / "jobs" / job_id / "associations.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2))

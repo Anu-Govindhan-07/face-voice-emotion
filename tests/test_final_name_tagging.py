@@ -90,3 +90,23 @@ def test_enrollment_writes_files(tmp_path, monkeypatch):
     emb_path = Path("identity_store") / result["embedding_file"]
     assert emb_path.exists()
     assert np.load(emb_path).shape == (3,)
+
+
+def test_self_intro_uses_speaker_timeline_hint_when_segment_is_ambiguous(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    job_id = "job_hint"
+    _write_emb(job_id, "speaker_track")
+    _write_emb(job_id, "other_track")
+    tracks = [
+        _mk_track("speaker_track", 0.0, 20.0, area=12000),
+        _mk_track("other_track", 0.0, 5.0, area=11800),
+    ]
+    segs = [
+        {"speaker_id": "S1", "start": 0.0, "end": 8.64, "text": "Hello, I'm Matthew and Sina."},
+        {"speaker_id": "S1", "start": 8.64, "end": 14.4, "text": "I studied graphic design."},
+    ]
+
+    result = run_final_name_tagging(job_id, tracks, segs, config={"SPEAKER_HINT_CONFIDENCE": 0.75})
+    by_track = {row["track_id"]: row for row in result["tracks"]}
+    assert by_track["speaker_track"]["label"] == "Matthew"
+    assert by_track["speaker_track"]["label_source"] == "self_intro"
