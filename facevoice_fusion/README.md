@@ -130,3 +130,19 @@ export EMOTION_MODEL_NAME="your-hf-model-id"
 
 ## UI Viewer
 Open `http://localhost:8000` for a minimal HTML viewer that uploads a video, streams progress via SSE, and links to `ui.json`.
+
+## Final name tagging stage
+Use `src/name_tagging/final_name_tagging.py` after diarization + ASR + face embeddings are generated:
+
+```python
+from src.name_tagging.final_name_tagging import run_final_name_tagging
+
+result = run_final_name_tagging(
+    job_id="<job_id>",
+    face_tracks=face_tracks,
+    diarized_segments=diarized_segments,
+    identity_store_dir="identity_store",
+)
+```
+
+This writes `data/jobs/<job_id>/associations.json` and updates `identity_store/identities.json` when high-confidence self-intros are resolved.
