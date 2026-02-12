@@ -1,200 +1,149 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 
 from app.config import FACE_MATCH_MARGIN, FACE_MATCH_THRESHOLD, FACE_MAYBE_THRESHOLD, IDENTITY_STORE
 from .utils import console
 
-_embedding_cache: Dict[str, Tuple[float, np.ndarray]] = {}
+_STORE_LOCK = threading.Lock()
+
+
+def _identity_root() -> Path:
+    root = IDENTITY_STORE.parent
+    (root / "embeddings").mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _load_store() -> Dict:
-    if not IDENTITY_STORE.exists():
-        return {"persons": {}, "meta": {"schema_version": 3}}
-    store = json.loads(IDENTITY_STORE.read_text())
-    store.setdefault("persons", {})
-    store.setdefault("meta", {})
-    store["meta"]["schema_version"] = max(3, int(store["meta"].get("schema_version", 1)))
-    for person in store["persons"].values():
-        person.setdefault("associations", [])
-    return store
+    _identity_root()
+    with _STORE_LOCK:
+        if not IDENTITY_STORE.exists():
+            return {"identities": []}
+        payload = json.loads(IDENTITY_STORE.read_text())
+    payload.setdefault("identities", [])
+    return payload
 
 
 def _save_store(store: Dict) -> None:
-    IDENTITY_STORE.write_text(json.dumps(store, indent=2))
+    _identity_root()
+    tmp_path = IDENTITY_STORE.with_suffix(".json.tmp")
+    payload = {"identities": store.get("identities", [])}
+    with _STORE_LOCK:
+        tmp_path.write_text(json.dumps(payload, indent=2))
+        tmp_path.replace(IDENTITY_STORE)
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-8
-    return float(np.dot(a, b) / denom)
+    a_vec = np.asarray(a, dtype=np.float32).reshape(-1)
+    b_vec = np.asarray(b, dtype=np.float32).reshape(-1)
+    denom = float(np.linalg.norm(a_vec) * np.linalg.norm(b_vec))
+    if denom <= 1e-12:
+        return 0.0
+    return float(np.dot(a_vec, b_vec) / denom)
 
 
-def _normalize(embedding: np.ndarray) -> np.ndarray:
-    norm = np.linalg.norm(embedding) + 1e-8
-    return embedding / norm
+def _next_identity_id(identities: List[Dict]) -> str:
+    highest = 0
+    for row in identities:
+        raw = str(row.get("id") or "")
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if digits:
+            highest = max(highest, int(digits))
+    return f"{highest + 1:04d}"
 
 
-def _load_embedding(path: str) -> Optional[np.ndarray]:
-    emb_path = Path(path)
-    if not emb_path.exists():
-        return None
-    key = str(emb_path)
-    modified = emb_path.stat().st_mtime
-    cached = _embedding_cache.get(key)
-    if cached and cached[0] == modified:
-        return cached[1]
-    embedding = _normalize(np.load(emb_path))
-    _embedding_cache[key] = (modified, embedding)
-    return embedding
+def _find_identity_by_name(store: Dict, name: str) -> Optional[Dict]:
+    for identity in store.get("identities", []):
+        if str(identity.get("name", "")).casefold() == str(name or "").casefold():
+            return identity
+    return None
 
 
-def _build_person_index(person: Dict) -> bool:
-    vectors = person.get("face_vectors", [])
-    embeddings: List[np.ndarray] = []
-    valid_vectors = []
-    for vector in vectors:
-        embedding = _load_embedding(vector.get("path", ""))
-        if embedding is None:
-            continue
-        embeddings.append(embedding)
-        valid_vectors.append(vector)
-    person["face_vectors"] = valid_vectors
-    if not embeddings:
-        person.pop("face_index", None)
-        return False
-    matrix = np.vstack(embeddings)
-    centroid = _normalize(np.mean(matrix, axis=0))
-    person["face_index"] = {
-        "centroid": centroid.tolist(),
-        "count": int(matrix.shape[0]),
-        "updated_at": datetime.utcnow().isoformat(),
-    }
-    return True
-
-
-def _sync_store_indexes(store: Dict) -> None:
-    changed = False
-    for person in store.get("persons", {}).values():
-        if person.get("face_index"):
-            continue
-        if _build_person_index(person):
-            changed = True
-    if changed:
-        _save_store(store)
-
-
-def _record_association(person: Dict, association: Optional[Dict]) -> None:
-    if not association:
-        return
-    associations = person.setdefault("associations", [])
-    payload = {
-        "job_id": association.get("job_id"),
-        "track_id": association.get("track_id"),
-        "speaker_id": association.get("speaker_id"),
-        "name": association.get("name"),
-        "source": association.get("source"),
-        "created_at": datetime.utcnow().isoformat(),
-    }
-    signature = (payload["job_id"], payload["track_id"], payload["speaker_id"], payload["name"], payload["source"])
-    for existing in associations:
-        existing_signature = (
-            existing.get("job_id"),
-            existing.get("track_id"),
-            existing.get("speaker_id"),
-            existing.get("name"),
-            existing.get("source"),
-        )
-        if existing_signature == signature:
-            return
-    associations.append(payload)
-
-
-def _infer_name_from_associations(person: Dict) -> Optional[str]:
-    counts: Dict[str, int] = {}
-    for association in person.get("associations", []):
-        candidate = association.get("name")
-        if not candidate:
-            continue
-        counts[candidate] = counts.get(candidate, 0) + 1
-    if not counts:
-        return None
-    return max(counts.items(), key=lambda item: item[1])[0]
+def _embedding_paths(identity: Dict) -> List[Path]:
+    paths = []
+    for raw in identity.get("embeddings", []):
+        path = Path(str(raw))
+        if not path.exists():
+            path = _identity_root() / path
+        paths.append(path)
+    return paths
 
 
 def match_identity(embedding_path: Path) -> Dict[str, str | float | None]:
     store = _load_store()
-    _sync_store_indexes(store)
-    embedding = _normalize(np.load(embedding_path))
-    best_score = -1.0
-    best_person_id = None
-    best_name = "Unknown"
-    candidate_ids: List[str] = []
-    person_best_scores: Dict[str, float] = {}
+    if not embedding_path.exists():
+        return {
+            "status": "unknown",
+            "person_id": None,
+            "name": "Unknown",
+            "score": 0.0,
+            "candidate_person_id": None,
+            "candidate_name": "Unknown",
+            "candidate_score": 0.0,
+            "candidate_margin": 0.0,
+        }
 
-    for person_id, person in store.get("persons", {}).items():
-        centroid_values = person.get("face_index", {}).get("centroid")
-        if not centroid_values:
+    embedding = np.load(embedding_path)
+    scores_by_identity: Dict[str, float] = {}
+    names_by_identity: Dict[str, str] = {}
+
+    for identity in store.get("identities", []):
+        identity_id = str(identity.get("id") or "")
+        if not identity_id:
             continue
-        centroid = np.array(centroid_values, dtype=np.float32)
-        score = _cosine_similarity(embedding, centroid)
-        candidate_ids.append(person_id)
-        person_best_scores[person_id] = max(person_best_scores.get(person_id, -1.0), score)
-        if score > best_score:
-            best_score = score
-            best_person_id = person_id
-            best_name = person.get("name") or _infer_name_from_associations(person) or "Unknown"
+        names_by_identity[identity_id] = str(identity.get("name") or "Unknown")
+        best = -1.0
+        for emb_path in _embedding_paths(identity):
+            if not emb_path.exists():
+                continue
+            score = _cosine_similarity(embedding, np.load(emb_path))
+            best = max(best, score)
+        if best >= 0:
+            scores_by_identity[identity_id] = best
 
-    if candidate_ids:
-        # Refine against raw vectors for the strongest centroid candidates only.
-        ranked = sorted(
-            candidate_ids,
-            key=lambda pid: _cosine_similarity(
-                embedding,
-                np.array(store["persons"][pid].get("face_index", {}).get("centroid", []), dtype=np.float32),
-            ),
-            reverse=True,
-        )[:3]
-        for person_id in ranked:
-            person = store["persons"][person_id]
-            for vector in person.get("face_vectors", []):
-                vec = _load_embedding(vector.get("path", ""))
-                if vec is None:
-                    continue
-                score = _cosine_similarity(embedding, vec)
-                person_best_scores[person_id] = max(person_best_scores.get(person_id, -1.0), score)
-                if score > best_score:
-                    best_score = score
-                    best_person_id = person_id
-                    best_name = person.get("name") or _infer_name_from_associations(person) or "Unknown"
+    if not scores_by_identity:
+        return {
+            "status": "unknown",
+            "person_id": None,
+            "name": "Unknown",
+            "score": 0.0,
+            "candidate_person_id": None,
+            "candidate_name": "Unknown",
+            "candidate_score": 0.0,
+            "candidate_margin": 0.0,
+        }
 
-    ranked_scores = sorted(person_best_scores.items(), key=lambda item: item[1], reverse=True)
-    top_score = ranked_scores[0][1] if ranked_scores else -1.0
-    second_score = ranked_scores[1][1] if len(ranked_scores) > 1 else -1.0
+    ranked = sorted(scores_by_identity.items(), key=lambda item: item[1], reverse=True)
+    candidate_id, top_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else -1.0
     margin = top_score - second_score if second_score >= 0 else 1.0
 
     status = "unknown"
+    resolved_id: Optional[str] = None
     if top_score >= FACE_MATCH_THRESHOLD and margin >= FACE_MATCH_MARGIN:
         status = "matched"
+        resolved_id = candidate_id
     elif top_score >= FACE_MAYBE_THRESHOLD:
         status = "maybe"
 
-    resolved_person_id = best_person_id if status == "matched" else None
-    resolved_name = best_name if resolved_person_id else "Unknown"
+    resolved_name = names_by_identity.get(resolved_id, "Unknown") if resolved_id else "Unknown"
+    candidate_name = names_by_identity.get(candidate_id, "Unknown")
 
     return {
         "status": status,
-        "person_id": resolved_person_id,
+        "person_id": resolved_id,
         "name": resolved_name,
-        "score": float(best_score if best_score > 0 else 0.0),
-        "candidate_person_id": best_person_id,
-        "candidate_name": best_name if best_person_id else "Unknown",
-        "candidate_score": float(top_score if top_score > 0 else 0.0),
-        "candidate_margin": float(margin if margin > 0 else 0.0),
+        "score": float(top_score),
+        "candidate_person_id": candidate_id,
+        "candidate_name": candidate_name,
+        "candidate_score": float(top_score),
+        "candidate_margin": float(max(0.0, margin)),
     }
 
 
@@ -204,24 +153,35 @@ def remember_identity_embedding(
     person_id: Optional[str] = None,
     allow_create: bool = False,
 ) -> Dict[str, Optional[str]]:
-    store = _load_store()
-    persons = store.setdefault("persons", {})
-    now = datetime.utcnow().isoformat()
-    selected_person_id = person_id
-    if selected_person_id is None and not allow_create:
+    if not embedding_path.exists():
         return {"person_id": None, "name": None}
-    if selected_person_id is None:
-        selected_person_id = f"p_{len(persons) + 1:03d}"
-        persons[selected_person_id] = {"name": None, "face_vectors": [], "associations": []}
 
-    person = persons.setdefault(selected_person_id, {"name": None, "face_vectors": [], "associations": []})
-    vectors = person.setdefault("face_vectors", [])
-    if not any(vector.get("path") == str(embedding_path) for vector in vectors):
-        vectors.append({"path": str(embedding_path), "created_at": now, "track_id": track_id})
+    store = _load_store()
+    identities = store.setdefault("identities", [])
+    identity = None
 
-    _build_person_index(person)
+    if person_id:
+        identity = next((row for row in identities if str(row.get("id")) == str(person_id)), None)
+    if identity is None and allow_create:
+        identity = {
+            "id": _next_identity_id(identities),
+            "name": None,
+            "embeddings": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_job": None,
+        }
+        identities.append(identity)
+
+    if identity is None:
+        return {"person_id": None, "name": None}
+
+    emb_dst = _identity_root() / "embeddings" / f"{identity['id']}_{track_id}.npy"
+    np.save(emb_dst, np.asarray(np.load(embedding_path), dtype=np.float32))
+    emb_ref = str(emb_dst).replace("\\", "/")
+    if emb_ref not in identity.setdefault("embeddings", []):
+        identity["embeddings"].append(emb_ref)
     _save_store(store)
-    return {"person_id": selected_person_id, "name": person.get("name")}
+    return {"person_id": identity["id"], "name": identity.get("name")}
 
 
 def enroll_identity(
@@ -231,65 +191,59 @@ def enroll_identity(
     association: Optional[Dict] = None,
     merge_by_name: bool = False,
 ) -> Dict[str, str]:
-    store = _load_store()
-    persons = store.setdefault("persons", {})
     emb_path = Path("data") / "jobs" / job_id / "embeddings" / "face" / f"{track_id}.npy"
+    store = _load_store()
+    identities = store.setdefault("identities", [])
 
-    matched_person_id = None
-    if emb_path.exists():
+    identity = None
+    if merge_by_name and name:
+        identity = _find_identity_by_name(store, name)
+
+    if identity is None and emb_path.exists():
         matched = match_identity(emb_path)
-        if matched.get("status") == "matched":
-            matched_person_id = matched.get("person_id")
+        candidate_id = matched.get("person_id") if matched.get("status") == "matched" else None
+        if candidate_id:
+            identity = next((row for row in identities if str(row.get("id")) == str(candidate_id)), None)
 
-    person_id = matched_person_id
-    if person_id is None and name and merge_by_name:
-        for pid, person in persons.items():
-            if person.get("name") == name:
-                person_id = pid
-                break
-    if person_id is None:
-        person_id = f"p_{len(persons) + 1:03d}"
-        persons[person_id] = {"name": None, "face_vectors": [], "associations": []}
+    if identity is None:
+        identity = {
+            "id": _next_identity_id(identities),
+            "name": name or "Unknown",
+            "embeddings": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_job": job_id,
+            "associations": [],
+        }
+        identities.append(identity)
 
     if name:
-        persons[person_id]["name"] = name
+        identity["name"] = name
 
-    _record_association(
-        persons[person_id],
-        association
-        or {
-            "job_id": job_id,
-            "track_id": track_id,
-            "speaker_id": None,
-            "name": name,
-            "source": "manual_enroll" if name else "auto_enroll",
-        },
-    )
+    if association:
+        associations = identity.setdefault("associations", [])
+        if association not in associations:
+            associations.append(association)
 
-    if not persons[person_id].get("name"):
-        persons[person_id]["name"] = _infer_name_from_associations(persons[person_id])
+    if emb_path.exists():
+        emb_dst = _identity_root() / "embeddings" / f"{identity['id']}_{track_id}.npy"
+        np.save(emb_dst, np.asarray(np.load(emb_path), dtype=np.float32))
+        emb_ref = str(emb_dst).replace("\\", "/")
+        if emb_ref not in identity.setdefault("embeddings", []):
+            identity["embeddings"].append(emb_ref)
 
-    face_vectors = persons[person_id].setdefault("face_vectors", [])
-    if not any(vector.get("path") == str(emb_path) for vector in face_vectors):
-        face_vectors.append({
-            "path": str(emb_path),
-            "created_at": datetime.utcnow().isoformat(),
-            "track_id": track_id,
-        })
-    _build_person_index(persons[person_id])
     _save_store(store)
-    person_name = persons[person_id].get("name") or "Unknown"
-    console.log(f"Enrolled identity {person_id} ({person_name}) for track {track_id}")
-    return {"person_id": person_id, "name": person_name}
+    person_name = str(identity.get("name") or "Unknown")
+    console.log(f"Enrolled identity {identity['id']} ({person_name}) for track {track_id}")
+    return {"person_id": str(identity["id"]), "name": person_name}
 
 
 def list_identities() -> List[Dict[str, str | int]]:
     store = _load_store()
-    items = []
-    for person_id, person in store.get("persons", {}).items():
-        items.append({
-            "person_id": person_id,
-            "name": person.get("name", "Unknown"),
-            "count_face_vectors": len(person.get("face_vectors", [])),
-        })
-    return items
+    return [
+        {
+            "person_id": str(identity.get("id") or ""),
+            "name": str(identity.get("name") or "Unknown"),
+            "count_face_vectors": len(identity.get("embeddings", [])),
+        }
+        for identity in store.get("identities", [])
+    ]
