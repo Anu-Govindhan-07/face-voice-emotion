@@ -9,8 +9,6 @@ This stage creates/updates:
 """
 
 import json
-import logging
-import re
 import uuid
 import unicodedata
 from datetime import datetime, timezone
@@ -19,65 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from src.name_tagging.name_extraction import extract_name_signals
+from .name_extraction import extract_name_signals
 
-logger = logging.getLogger(__name__)
-
-_DEFAULT_NER_MODEL = "Davlan/xlm-roberta-base-ner-hrl"
-_MIN_SEGMENT_CHARS = 3
-_SELF_CONTEXT_WINDOW = 28
-_SELF_KEYWORDS = {
-    "i am",
-    "i'm",
-    "my name",
-    "name is",
-    "jag heter",
-    "mitt namn",
-    "je m'appelle",
-    "me llamo",
-    "mi nombre",
-    "ich bin",
-    "mein name",
-    "mi chiamo",
-    "sou eu",
-    "eu sou",
-    "меня зовут",
-    "我叫",
-    "私の名前",
-    "내 이름",
-    "benim adım",
-}
-_STOPWORDS = {
-    "jag",
-    "du",
-    "han",
-    "hon",
-    "det",
-    "den",
-    "mitt",
-    "namn",
-    "my",
-    "name",
-    "this",
-    "that",
-    "is",
-    "är",
-    "här",
-    "detta",
-    "hello",
-    "hej",
-    "thanks",
-    "tack",
-}
-_COMMON_FALSE_POSITIVES = {
-    "unknown",
-    "speaker",
-    "audio",
-    "video",
-    "meeting",
-    "interview",
-    "person",
-}
 _DEFAULT_CONFIG = {
     "MATCH_THRESHOLD": 0.45,
     "MAYBE_THRESHOLD": 0.35,
@@ -85,7 +26,6 @@ _DEFAULT_CONFIG = {
     "TEMPORAL_WINDOW_SECONDS": 5.0,
     "SPEAKER_HINT_CONFIDENCE": 0.82,
 }
-
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -96,94 +36,9 @@ def _normalize_name(raw: str) -> Optional[str]:
     cleaned = "".join(ch for ch in value if ch.isalpha() or ch in "-'")
     if len(cleaned) < 2:
         return None
-    normalized = unicodedata.normalize("NFKC", cleaned)
-    if normalized.casefold() in _STOPWORDS or normalized.casefold() in _COMMON_FALSE_POSITIVES:
-        return None
-    return "-".join(part[:1].upper() + part[1:].lower() for part in normalized.split("-"))
+    return "-".join(part[:1].upper() + part[1:].lower() for part in cleaned.split("-"))
 
 
-class MultilingualNameDetector:
-    def __init__(self, model_name: str = _DEFAULT_NER_MODEL) -> None:
-        self.model_name = model_name
-        self._ner = None
-        self._ner_error: Optional[str] = None
-
-    def _get_ner(self):
-        if self._ner is not None:
-            return self._ner
-        if self._ner_error:
-            return None
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            model = AutoModelForTokenClassification.from_pretrained(self.model_name)
-            self._ner = pipeline(
-                "token-classification",
-                model=model,
-                tokenizer=tokenizer,
-                aggregation_strategy="simple",
-            )
-            logger.info("Loaded multilingual NER model: %s", self.model_name)
-        except Exception as exc:
-            self._ner_error = str(exc)
-            logger.warning("Could not load multilingual NER model %s: %s", self.model_name, exc)
-            self._ner = None
-        return self._ner
-
-    def extract_entities(self, text: str) -> List[Dict[str, Any]]:
-        ner = self._get_ner()
-        if not text or len(text.strip()) < _MIN_SEGMENT_CHARS or ner is None:
-            return []
-        try:
-            entities = ner(text)
-        except Exception as exc:
-            logger.warning("NER inference failed: %s", exc)
-            return []
-
-        out: List[Dict[str, Any]] = []
-        for entity in entities:
-            label = str(entity.get("entity_group") or entity.get("entity") or "")
-            if "PER" not in label.upper() and "PERSON" not in label.upper():
-                continue
-            start = int(entity.get("start", 0))
-            end = int(entity.get("end", start))
-            raw_name = str(entity.get("word", ""))
-            normalized_name = _normalize_name(raw_name)
-            if not normalized_name:
-                continue
-            out.append({"name": normalized_name, "start": start, "end": end, "confidence": float(entity.get("score", 0.0))})
-        return out
-
-
-_NAME_DETECTOR = MultilingualNameDetector()
-
-
-def _is_self_identification(text: str, start: int) -> bool:
-    lower = text.casefold()
-    context = lower[max(0, start - _SELF_CONTEXT_WINDOW) : start]
-    return any(keyword in context for keyword in _SELF_KEYWORDS)
-
-
-def _fallback_regex_entities(text: str) -> List[Dict[str, Any]]:
-    candidates: List[Dict[str, Any]] = []
-
-    context_patterns = [
-        re.compile(r"\b(?:i am|i['’]m|my name is|jag heter|mitt namn är|je m'appelle|me llamo|mi nombre es|ich bin|mein name ist)\s+([^\W\d_][^\s,.;:!?]{1,30})", re.IGNORECASE),
-        re.compile(r"\b(?:this is|that is|det här är|detta är|han heter|hon heter)\s+([^\W\d_][^\s,.;:!?]{1,30})", re.IGNORECASE),
-    ]
-    for pattern in context_patterns:
-        for match in pattern.finditer(text):
-            name = _normalize_name(match.group(1))
-            if name:
-                candidates.append({"name": name, "start": match.start(1), "end": match.end(1), "confidence": 0.42})
-
-    for match in re.finditer(r"\b([^\W\d_][^\W\d_\-']{1,30}(?:[-'][^\W\d_]{1,30})?)\b", text, flags=re.UNICODE):
-        token = match.group(1)
-        if not token or not token[0].isupper():
-            continue
-        name = _normalize_name(token)
-        if name:
-            candidates.append({"name": name, "start": match.start(1), "end": match.end(1), "confidence": 0.35})
-    return candidates
 
 
 def detect_names_from_segments(diarized_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

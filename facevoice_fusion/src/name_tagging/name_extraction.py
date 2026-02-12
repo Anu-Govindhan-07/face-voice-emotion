@@ -39,6 +39,9 @@ _STOPWORDS = {
     "that",
     "and",
     "och",
+    "hello",
+    "hej",
+    "hi",
 }
 _NON_NAME_TOKENS = {
     "la",

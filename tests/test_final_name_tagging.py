@@ -103,7 +103,7 @@ def test_self_intro_uses_speaker_timeline_hint_when_segment_is_ambiguous(tmp_pat
         _mk_track("other_track", 0.0, 5.0, area=11800),
     ]
     segs = [
-        {"speaker_id": "S1", "start": 0.0, "end": 8.64, "text": "Hello, I'm Matthew and Sina."},
+        {"speaker_id": "S1", "start": 0.0, "end": 8.64, "text": "Hello, I'm Matthew and Sina. I'm a Filipino American born and raised in LA."},
         {"speaker_id": "S1", "start": 8.64, "end": 14.4, "text": "I studied graphic design."},
     ]
 
