@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from .name_extraction import extract_name_signals
+from ..diarization.speaker_alignment import align_transcript_to_diarization
 
 _DEFAULT_CONFIG = {
     "MATCH_THRESHOLD": 0.45,
@@ -44,12 +45,27 @@ def _normalize_name(raw: str) -> Optional[str]:
 
 
 def detect_names_from_segments(diarized_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    signals = extract_name_signals(diarized_segments)
+    has_text = any(str(seg.get("text") or seg.get("transcript_text") or "").strip() for seg in diarized_segments)
+    if has_text:
+        aligned = diarized_segments
+    else:
+        diar = [
+            {"speaker_id": seg.get("speaker_id"), "start": float(seg.get("start", seg.get("start_ts", 0.0))), "end": float(seg.get("end", seg.get("end_ts", seg.get("start", seg.get("start_ts", 0.0))))) }
+            for seg in diarized_segments
+        ]
+        asr = [
+            {"start": float(seg.get("start", seg.get("start_ts", 0.0))), "end": float(seg.get("end", seg.get("end_ts", seg.get("start", seg.get("start_ts", 0.0))))), "text": str(seg.get("text") or seg.get("transcript_text") or ""), "words": seg.get("words")}
+            for seg in diarized_segments
+        ]
+        aligned = align_transcript_to_diarization(diar, asr)
+
+    signals = extract_name_signals(aligned)
     return [
         {
             "speaker_id": item.get("speaker_id", ""),
             "start_time": float(item.get("start", 0.0)),
             "end_time": float(item.get("end", 0.0)),
+            "alignment_confidence": float(item.get("alignment_confidence", 1.0)),
             "detected_names": list(item.get("signals", [])),
             "transcript_text": str(item.get("text", "")),
         }
