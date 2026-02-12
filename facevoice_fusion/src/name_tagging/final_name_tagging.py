@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from transformers import AutoModelForTokenClassification, AutoTokenizer, pipeline
+
+from src.name_tagging.name_extraction import extract_name_signals
 
 logger = logging.getLogger(__name__)
 
@@ -186,45 +187,17 @@ def _fallback_regex_entities(text: str) -> List[Dict[str, Any]]:
 
 
 def detect_names_from_segments(diarized_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    signals: List[Dict[str, Any]] = []
-    for segment in diarized_segments:
-        text = str(segment.get("transcript_text", segment.get("text", "")))
-        speaker_id = str(segment.get("speaker_id") or "")
-        start_time = float(segment.get("start_ts", segment.get("start", 0.0)))
-        end_time = float(segment.get("end_ts", segment.get("end", start_time)))
-
-        detections = _NAME_DETECTOR.extract_entities(text)
-        if not detections:
-            detections = _fallback_regex_entities(text)
-
-        merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        for item in detections:
-            name = item["name"]
-            entity_type = "self" if _is_self_identification(text, int(item.get("start", 0))) else "mentioned"
-            key = (name.casefold(), entity_type)
-            curr = merged.get(key)
-            if curr is None or float(item.get("confidence", 0.0)) > curr["confidence"]:
-                merged[key] = {"name": name, "type": entity_type, "confidence": round(float(item.get("confidence", 0.0)), 4)}
-
-        detected_names = sorted(merged.values(), key=lambda row: row["confidence"], reverse=True)
-        logger.info(
-            "Name detection segment speaker=%s [%.2f-%.2f] text=%r names=%s",
-            speaker_id or "unknown",
-            start_time,
-            end_time,
-            text,
-            detected_names,
-        )
-        signals.append(
-            {
-                "speaker_id": speaker_id,
-                "start_time": start_time,
-                "end_time": end_time,
-                "detected_names": detected_names,
-                "transcript_text": text,
-            }
-        )
-    return signals
+    signals = extract_name_signals(diarized_segments)
+    return [
+        {
+            "speaker_id": item.get("speaker_id", ""),
+            "start_time": float(item.get("start", 0.0)),
+            "end_time": float(item.get("end", 0.0)),
+            "detected_names": list(item.get("signals", [])),
+            "transcript_text": str(item.get("text", "")),
+        }
+        for item in signals
+    ]
 
 
 def parse_names_from_transcript(text: str) -> Dict[str, List[str]]:
