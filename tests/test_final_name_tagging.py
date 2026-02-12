@@ -12,6 +12,9 @@ from src.name_tagging.final_name_tagging import (
     enroll_identity,
     load_identity_store,
     match_identity,
+    detect_names_from_segments,
+    generate_new_identity_id,
+    load_identities,
     parse_names_from_transcript,
     run_final_name_tagging,
 )
@@ -64,7 +67,7 @@ def test_matching_threshold_states(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     store_dir = "identity_store"
     store = load_identity_store(store_dir)
-    enroll_identity("Mia", np.array([1.0, 0.0], dtype=np.float32), {"job_id": "j", "track_id": "t", "timestamp": 1, "confidence": 0.9}, store_dir, store)
+    enroll_identity("Mia", np.array([1.0, 0.0], dtype=np.float32), "j", "t", store_dir, store)
 
     matched = match_identity(np.array([0.9, 0.1], dtype=np.float32), store, store_dir, {"MATCH_THRESHOLD": 0.8, "MAYBE_THRESHOLD": 0.4})
     maybe = match_identity(np.array([0.5, 0.5], dtype=np.float32), store, store_dir, {"MATCH_THRESHOLD": 0.8, "MAYBE_THRESHOLD": 0.4})
@@ -80,14 +83,15 @@ def test_enrollment_writes_files(tmp_path, monkeypatch):
     result = enroll_identity(
         "Anu",
         np.array([1.0, 2.0, 3.0], dtype=np.float32),
-        {"job_id": "job1", "track_id": "track1", "timestamp": 3.2, "confidence": 0.91},
+        "job1",
+        "track1",
     )
 
     identities_path = Path("identity_store") / "identities.json"
     assert identities_path.exists()
     payload = json.loads(identities_path.read_text())
     assert payload["identities"]
-    emb_path = Path("identity_store") / result["embedding_file"]
+    emb_path = Path(result["embedding_file"])
     assert emb_path.exists()
     assert np.load(emb_path).shape == (3,)
 
@@ -102,7 +106,7 @@ def test_self_intro_uses_speaker_timeline_hint_when_segment_is_ambiguous(tmp_pat
         _mk_track("other_track", 0.0, 5.0, area=11800),
     ]
     segs = [
-        {"speaker_id": "S1", "start": 0.0, "end": 8.64, "text": "Hello, I'm Matthew and Sina."},
+        {"speaker_id": "S1", "start": 0.0, "end": 8.64, "text": "Hello, I'm Matthew and Sina. I'm a Filipino American born and raised in LA."},
         {"speaker_id": "S1", "start": 8.64, "end": 14.4, "text": "I studied graphic design."},
     ]
 
@@ -110,3 +114,53 @@ def test_self_intro_uses_speaker_timeline_hint_when_segment_is_ambiguous(tmp_pat
     by_track = {row["track_id"]: row for row in result["tracks"]}
     assert by_track["speaker_track"]["label"] == "Matthew"
     assert by_track["speaker_track"]["label_source"] == "self_intro"
+
+
+def test_detect_names_from_segments_multilingual_and_dedup():
+    segs = [
+        {
+            "speaker_id": "S1",
+            "start_ts": 0.0,
+            "end_ts": 2.0,
+            "transcript_text": "jag heter anu och det här är Sam. Sam pratar också.",
+        }
+    ]
+
+    result = detect_names_from_segments(segs)
+    assert len(result) == 1
+    names = result[0]["detected_names"]
+    assert any(row["name"] == "Anu" and row["type"] == "self" for row in names)
+    assert any(row["name"] == "Sam" and row["type"] == "mentioned" for row in names)
+    assert len([row for row in names if row["name"] == "Sam"]) == 1
+
+
+def test_detect_names_from_segments_no_names():
+    segs = [{"speaker_id": "S2", "start_ts": 1.0, "end_ts": 1.4, "transcript_text": "mmm ok yes"}]
+    result = detect_names_from_segments(segs)
+    assert result[0]["detected_names"] == []
+
+
+def test_generate_new_identity_id_incremental():
+    identities = [{"id": "0001"}, {"id": "0007"}]
+    assert generate_new_identity_id(identities) == "0008"
+
+
+def test_existing_name_appends_embedding_and_cross_video_match(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    v1 = np.array([1.0, 0.0], dtype=np.float32)
+    v2 = np.array([0.99, 0.01], dtype=np.float32)
+
+    first = enroll_identity("Xeno", v1, "job_001", "track12")
+    second = enroll_identity("Xeno", v2, "job_002", "track77")
+
+    assert first["identity_id"] == second["identity_id"]
+
+    payload = load_identities("identity_store")
+    assert len(payload["identities"]) == 1
+    identity = payload["identities"][0]
+    assert identity["id"] == "0001"
+    assert len(identity["embeddings"]) == 2
+
+    match = match_identity(np.array([0.98, 0.02], dtype=np.float32), identity_store_dir="identity_store")
+    assert match["status"] == "matched"
+    assert match["name"] == "Xeno"

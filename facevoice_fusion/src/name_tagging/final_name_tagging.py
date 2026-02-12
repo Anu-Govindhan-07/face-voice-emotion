@@ -9,45 +9,16 @@ This stage creates/updates:
 """
 
 import json
-import re
 import uuid
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})"
-_SELF_PATTERNS = [
-    re.compile(rf"\bi['’]?m\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bi am\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bmy name is\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bjag heter\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bmitt namn är\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-]
-_MENTION_PATTERNS = [
-    re.compile(rf"\b(?:this is|that is|det här är|detta är)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\b(?:han heter|hon heter)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\b{_NAME_TOKEN}\s+(?:is|är)\b", re.IGNORECASE),
-]
-_STOPWORDS = {
-    "jag",
-    "du",
-    "han",
-    "hon",
-    "det",
-    "den",
-    "mitt",
-    "namn",
-    "my",
-    "name",
-    "this",
-    "that",
-    "is",
-    "är",
-    "här",
-    "detta",
-}
+from .name_extraction import extract_name_signals
+
 _DEFAULT_CONFIG = {
     "MATCH_THRESHOLD": 0.45,
     "MAYBE_THRESHOLD": 0.35,
@@ -56,37 +27,40 @@ _DEFAULT_CONFIG = {
     "SPEAKER_HINT_CONFIDENCE": 0.82,
 }
 
+_IDENTITY_STORE_LOCK = threading.Lock()
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _normalize_name(raw: str) -> Optional[str]:
-    cleaned = re.sub(r"[^A-Za-zÅÄÖåäö\-']", "", (raw or "").strip())
+    value = (raw or "").strip().strip(".,!?;:\"'`()[]{}")
+    cleaned = "".join(ch for ch in value if ch.isalpha() or ch in "-'")
     if len(cleaned) < 2:
         return None
-    if cleaned.casefold() in _STOPWORDS:
-        return None
-    return cleaned[0].upper() + cleaned[1:].lower()
+    return "-".join(part[:1].upper() + part[1:].lower() for part in cleaned.split("-"))
+
+
+
+
+def detect_names_from_segments(diarized_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    signals = extract_name_signals(diarized_segments)
+    return [
+        {
+            "speaker_id": item.get("speaker_id", ""),
+            "start_time": float(item.get("start", 0.0)),
+            "end_time": float(item.get("end", 0.0)),
+            "detected_names": list(item.get("signals", [])),
+            "transcript_text": str(item.get("text", "")),
+        }
+        for item in signals
+    ]
 
 
 def parse_names_from_transcript(text: str) -> Dict[str, List[str]]:
-    self_names: List[str] = []
-    mentioned_names: List[str] = []
-    content = text or ""
-
-    for pattern in _SELF_PATTERNS:
-        for match in pattern.finditer(content):
-            name = _normalize_name(match.group(1))
-            if name and name not in self_names:
-                self_names.append(name)
-
-    for pattern in _MENTION_PATTERNS:
-        for match in pattern.finditer(content):
-            name = _normalize_name(match.group(1))
-            if name and name not in self_names and name not in mentioned_names:
-                mentioned_names.append(name)
-
+    parsed = detect_names_from_segments([{"speaker_id": "", "start": 0.0, "end": 0.0, "text": text or ""}])[0]["detected_names"]
+    self_names = [row["name"] for row in parsed if row["type"] == "self"]
+    mentioned_names = [row["name"] for row in parsed if row["type"] == "mentioned"]
     return {"self_names": self_names, "mentioned_names": mentioned_names}
 
 
@@ -129,32 +103,51 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a_vec, b_vec) / denom)
 
 
-def load_identity_store(identity_store_dir: str = "identity_store") -> Dict[str, Any]:
+def _identity_paths(identity_store_dir: str = "identity_store") -> Dict[str, Path]:
     store_dir = Path(identity_store_dir)
-    identities_path = store_dir / "identities.json"
     embeddings_dir = store_dir / "embeddings"
+    identities_path = store_dir / "identities.json"
     store_dir.mkdir(parents=True, exist_ok=True)
     embeddings_dir.mkdir(parents=True, exist_ok=True)
+    return {"store_dir": store_dir, "embeddings_dir": embeddings_dir, "identities_path": identities_path}
 
-    if identities_path.exists():
-        data = json.loads(identities_path.read_text())
-    else:
-        data = {"identities": []}
-    data.setdefault("identities", [])
-    data["_paths"] = {
-        "store_dir": str(store_dir),
-        "identities_path": str(identities_path),
-        "embeddings_dir": str(embeddings_dir),
-    }
-    return data
+
+def load_identities(identity_store_dir: str = "identity_store") -> Dict[str, Any]:
+    paths = _identity_paths(identity_store_dir)
+    with _IDENTITY_STORE_LOCK:
+        if paths["identities_path"].exists():
+            payload = json.loads(paths["identities_path"].read_text())
+        else:
+            payload = {"identities": []}
+    payload.setdefault("identities", [])
+    return payload
+
+
+def save_identities(payload: Dict[str, Any], identity_store_dir: str = "identity_store") -> None:
+    paths = _identity_paths(identity_store_dir)
+    data = {"identities": payload.get("identities", [])}
+    tmp_path = paths["identities_path"].with_suffix(".json.tmp")
+    with _IDENTITY_STORE_LOCK:
+        tmp_path.write_text(json.dumps(data, indent=2))
+        tmp_path.replace(paths["identities_path"])
+
+
+def load_identity_store(identity_store_dir: str = "identity_store") -> Dict[str, Any]:
+    return load_identities(identity_store_dir)
 
 
 def save_identity_store(store: Dict[str, Any], identity_store_dir: str = "identity_store") -> None:
-    store_dir = Path(identity_store_dir)
-    store_dir.mkdir(parents=True, exist_ok=True)
-    identities_path = store_dir / "identities.json"
-    payload = {"identities": store.get("identities", [])}
-    identities_path.write_text(json.dumps(payload, indent=2))
+    save_identities(store, identity_store_dir)
+
+
+def generate_new_identity_id(identities: List[Dict[str, Any]]) -> str:
+    max_id = 0
+    for row in identities:
+        raw = str(row.get("id") or row.get("identity_id") or "")
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if digits:
+            max_id = max(max_id, int(digits))
+    return f"{max_id + 1:04d}"
 
 
 def _find_identity_by_name(store: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
@@ -167,52 +160,53 @@ def _find_identity_by_name(store: Dict[str, Any], name: str) -> Optional[Dict[st
 def enroll_identity(
     name: str,
     embedding: np.ndarray,
-    metadata: Dict[str, Any],
+    job_id: str | Dict[str, Any],
+    track_id: Optional[str] = None,
     identity_store_dir: str = "identity_store",
     store: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    loaded_store = store or load_identity_store(identity_store_dir)
+    metadata: Dict[str, Any]
+    if isinstance(job_id, dict):
+        metadata = job_id
+        job_id = str(metadata.get("job_id") or "")
+        track_id = str(metadata.get("track_id") or track_id or "")
+    else:
+        metadata = {"job_id": job_id, "track_id": track_id}
+
     normalized = _normalize_name(name) or name
+    loaded_store = store or load_identities(identity_store_dir)
 
     identity = _find_identity_by_name(loaded_store, normalized)
     now = _utc_now()
     if identity is None:
+        new_id = generate_new_identity_id(loaded_store.get("identities", []))
         identity = {
-            "identity_id": f"id_{uuid.uuid4().hex[:12]}",
+            "id": new_id,
             "name": normalized,
-            "embedding_files": [],
+            "embeddings": [],
             "created_at": now,
+            "source_job": str(job_id),
             "last_seen_at": now,
-            "sources": [],
         }
         loaded_store["identities"].append(identity)
 
-    emb_id = f"emb_{uuid.uuid4().hex[:12]}"
-    emb_rel = Path("embeddings") / identity["identity_id"] / f"{emb_id}.npy"
-    emb_abs = Path(identity_store_dir) / emb_rel
-    emb_abs.parent.mkdir(parents=True, exist_ok=True)
-    np.save(emb_abs, np.asarray(embedding, dtype=np.float32))
+    identity_id = str(identity.get("id"))
+    safe_track = str(track_id or metadata.get("track_id") or f"track_{uuid.uuid4().hex[:6]}")
+    emb_path = _identity_paths(identity_store_dir)["embeddings_dir"] / f"{identity_id}_{safe_track}.npy"
+    np.save(emb_path, np.asarray(embedding, dtype=np.float32))
 
-    identity["embedding_files"].append(str(emb_rel))
+    emb_ref = str(emb_path).replace("\\", "/")
+    if emb_ref not in identity["embeddings"]:
+        identity["embeddings"].append(emb_ref)
     identity["last_seen_at"] = now
-    identity["sources"].append(
-        {
-            "embedding_id": emb_id,
-            "job_id": metadata.get("job_id"),
-            "track_id": metadata.get("track_id"),
-            "timestamp": metadata.get("timestamp"),
-            "confidence": metadata.get("confidence"),
-            "source": metadata.get("source", "self_intro"),
-        }
-    )
 
-    save_identity_store(loaded_store, identity_store_dir=identity_store_dir)
-    return {"identity_id": identity["identity_id"], "name": identity["name"], "embedding_file": str(emb_rel)}
+    save_identities(loaded_store, identity_store_dir)
+    return {"identity_id": identity_id, "name": identity["name"], "embedding_file": emb_ref}
 
 
 def match_identity(
     embedding: np.ndarray,
-    store: Dict[str, Any],
+    store: Optional[Dict[str, Any]] = None,
     identity_store_dir: str = "identity_store",
     config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -220,29 +214,30 @@ def match_identity(
     if config:
         cfg.update(config)
 
+    loaded_store = store or load_identities(identity_store_dir)
     best: Optional[Dict[str, Any]] = None
-    for identity in store.get("identities", []):
-        for rel in identity.get("embedding_files", []):
-            emb_path = Path(identity_store_dir) / rel
+    for identity in loaded_store.get("identities", []):
+        for emb_file in identity.get("embeddings", []):
+            emb_path = Path(emb_file)
+            if not emb_path.exists():
+                emb_path = Path(identity_store_dir) / emb_file
             if not emb_path.exists():
                 continue
             score = cosine_similarity(embedding, np.load(emb_path))
             if best is None or score > best["score"]:
                 best = {
-                    "identity_id": identity["identity_id"],
-                    "name": identity["name"],
+                    "identity_id": identity.get("id"),
+                    "name": identity.get("name"),
                     "score": score,
-                    "embedding_file": rel,
                 }
 
     if best is None:
-        return {"status": "unknown", "score": 0.0, "identity_id": None, "name": "Unknown"}
-
+        return {"status": "unknown", "score": 0.0, "identity_id": None, "name": None}
     if best["score"] >= float(cfg["MATCH_THRESHOLD"]):
         return {"status": "matched", **best}
     if best["score"] >= float(cfg["MAYBE_THRESHOLD"]):
         return {"status": "maybe", **best}
-    return {"status": "unknown", "score": float(best["score"]), "identity_id": None, "name": "Unknown"}
+    return {"status": "unknown", "score": float(best["score"]), "identity_id": None, "name": None}
 
 
 def _build_speaker_track_hints(
@@ -416,26 +411,31 @@ def run_final_name_tagging(
             match = match_identity(np.load(emb_path), store, identity_store_dir=identity_store_dir, config=cfg)
             status = match["status"]
             if status == "matched":
-                payload.update({"label": match["name"], "label_source": "identity_store", "confidence": match["score"], "identity_id": match["identity_id"], "notes": "matched"})
+                payload.update({"label": match.get("name") or "Unknown", "label_source": "identity_store", "confidence": match["score"], "identity_id": match["identity_id"], "notes": "matched"})
             elif status == "maybe":
                 payload["notes"] = "maybe_match"
                 payload["candidate_suggestions"] = [{"identity_id": match["identity_id"], "name": match["name"], "score": match["score"]}]
             events.append({"type": "embedding_match", "track_id": track_id, "status": status, "score": match["score"], "identity_id": match.get("identity_id"), "name": match.get("name")})
         assignments[track_id] = payload
 
-    segments = sorted(diarized_segments, key=lambda seg: float(seg.get("start_ts", seg.get("start", 0.0))))
+    name_signals = detect_names_from_segments(diarized_segments)
+    segments = sorted(name_signals, key=lambda seg: float(seg.get("start_time", 0.0)))
     for segment in segments:
-        text = str(segment.get("transcript_text", segment.get("text", "")))
+        text = str(segment.get("transcript_text", ""))
         if not text.strip():
             continue
-        seg_start = float(segment.get("start_ts", segment.get("start", 0.0)))
-        seg_end = float(segment.get("end_ts", segment.get("end", seg_start)))
+        seg_start = float(segment.get("start_time", 0.0))
+        seg_end = float(segment.get("end_time", seg_start))
         seg_mid = (seg_start + seg_end) / 2.0
         speaker_id = str(segment.get("speaker_id") or "")
-        names = parse_names_from_transcript(text)
+        names = segment.get("detected_names", [])
 
-        for name in names["self_names"]:
+        for detection in names:
+            if detection.get("type") != "self":
+                continue
+            name = str(detection.get("name") or "")
             track_id, confidence, reason = _resolve_speaker_track(face_tracks, seg_start, seg_end, asd)
+            confidence = max(confidence, float(detection.get("confidence", 0.0)))
             hint = speaker_hints.get(speaker_id)
             if (not track_id or confidence < float(cfg["MIN_ASSIGN_CONFIDENCE"])) and hint and hint["confidence"] >= float(cfg["SPEAKER_HINT_CONFIDENCE"]):
                 track_id = hint["track_id"]
@@ -453,13 +453,17 @@ def run_final_name_tagging(
                     enrolled = enroll_identity(
                         name,
                         np.load(emb_path),
-                        {"job_id": job_id, "track_id": track_id, "timestamp": seg_mid, "confidence": confidence, "source": "self_intro"},
+                        job_id,
+                        track_id,
                         identity_store_dir=identity_store_dir,
                         store=store,
                     )
                     assignments[track_id]["identity_id"] = enrolled["identity_id"]
 
-        for name in names["mentioned_names"]:
+        for detection in names:
+            if detection.get("type") != "mentioned":
+                continue
+            name = str(detection.get("name") or "")
             speaker_track_id, _, _ = _resolve_speaker_track(face_tracks, seg_start, seg_end, asd)
             hint = speaker_hints.get(speaker_id)
             if hint and hint["confidence"] >= float(cfg["SPEAKER_HINT_CONFIDENCE"]):
@@ -470,6 +474,7 @@ def run_final_name_tagging(
                 speaker_track_id=speaker_track_id,
                 temporal_window_seconds=float(cfg["TEMPORAL_WINDOW_SECONDS"]),
             )
+            confidence = max(confidence, float(detection.get("confidence", 0.0)))
             event_base = {"type": "mention", "speaker_id": speaker_id or None, "name": name, "segment_start": seg_start, "segment_end": seg_end}
             if not track_id or confidence < float(cfg["MIN_ASSIGN_CONFIDENCE"]):
                 events.append({**event_base, "track_id": None, "confidence": confidence, "notes": reason})
