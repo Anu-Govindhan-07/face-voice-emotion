@@ -10,6 +10,7 @@ This stage creates/updates:
 
 import json
 import uuid
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
