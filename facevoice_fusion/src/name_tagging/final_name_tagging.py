@@ -10,7 +10,7 @@ This stage creates/updates:
 
 import json
 import uuid
-import unicodedata
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,6 +26,8 @@ _DEFAULT_CONFIG = {
     "TEMPORAL_WINDOW_SECONDS": 5.0,
     "SPEAKER_HINT_CONFIDENCE": 0.82,
 }
+
+_IDENTITY_STORE_LOCK = threading.Lock()
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -101,32 +103,51 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a_vec, b_vec) / denom)
 
 
-def load_identity_store(identity_store_dir: str = "identity_store") -> Dict[str, Any]:
+def _identity_paths(identity_store_dir: str = "identity_store") -> Dict[str, Path]:
     store_dir = Path(identity_store_dir)
-    identities_path = store_dir / "identities.json"
     embeddings_dir = store_dir / "embeddings"
+    identities_path = store_dir / "identities.json"
     store_dir.mkdir(parents=True, exist_ok=True)
     embeddings_dir.mkdir(parents=True, exist_ok=True)
+    return {"store_dir": store_dir, "embeddings_dir": embeddings_dir, "identities_path": identities_path}
 
-    if identities_path.exists():
-        data = json.loads(identities_path.read_text())
-    else:
-        data = {"identities": []}
-    data.setdefault("identities", [])
-    data["_paths"] = {
-        "store_dir": str(store_dir),
-        "identities_path": str(identities_path),
-        "embeddings_dir": str(embeddings_dir),
-    }
-    return data
+
+def load_identities(identity_store_dir: str = "identity_store") -> Dict[str, Any]:
+    paths = _identity_paths(identity_store_dir)
+    with _IDENTITY_STORE_LOCK:
+        if paths["identities_path"].exists():
+            payload = json.loads(paths["identities_path"].read_text())
+        else:
+            payload = {"identities": []}
+    payload.setdefault("identities", [])
+    return payload
+
+
+def save_identities(payload: Dict[str, Any], identity_store_dir: str = "identity_store") -> None:
+    paths = _identity_paths(identity_store_dir)
+    data = {"identities": payload.get("identities", [])}
+    tmp_path = paths["identities_path"].with_suffix(".json.tmp")
+    with _IDENTITY_STORE_LOCK:
+        tmp_path.write_text(json.dumps(data, indent=2))
+        tmp_path.replace(paths["identities_path"])
+
+
+def load_identity_store(identity_store_dir: str = "identity_store") -> Dict[str, Any]:
+    return load_identities(identity_store_dir)
 
 
 def save_identity_store(store: Dict[str, Any], identity_store_dir: str = "identity_store") -> None:
-    store_dir = Path(identity_store_dir)
-    store_dir.mkdir(parents=True, exist_ok=True)
-    identities_path = store_dir / "identities.json"
-    payload = {"identities": store.get("identities", [])}
-    identities_path.write_text(json.dumps(payload, indent=2))
+    save_identities(store, identity_store_dir)
+
+
+def generate_new_identity_id(identities: List[Dict[str, Any]]) -> str:
+    max_id = 0
+    for row in identities:
+        raw = str(row.get("id") or row.get("identity_id") or "")
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if digits:
+            max_id = max(max_id, int(digits))
+    return f"{max_id + 1:04d}"
 
 
 def _find_identity_by_name(store: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
@@ -139,52 +160,53 @@ def _find_identity_by_name(store: Dict[str, Any], name: str) -> Optional[Dict[st
 def enroll_identity(
     name: str,
     embedding: np.ndarray,
-    metadata: Dict[str, Any],
+    job_id: str | Dict[str, Any],
+    track_id: Optional[str] = None,
     identity_store_dir: str = "identity_store",
     store: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    loaded_store = store or load_identity_store(identity_store_dir)
+    metadata: Dict[str, Any]
+    if isinstance(job_id, dict):
+        metadata = job_id
+        job_id = str(metadata.get("job_id") or "")
+        track_id = str(metadata.get("track_id") or track_id or "")
+    else:
+        metadata = {"job_id": job_id, "track_id": track_id}
+
     normalized = _normalize_name(name) or name
+    loaded_store = store or load_identities(identity_store_dir)
 
     identity = _find_identity_by_name(loaded_store, normalized)
     now = _utc_now()
     if identity is None:
+        new_id = generate_new_identity_id(loaded_store.get("identities", []))
         identity = {
-            "identity_id": f"id_{uuid.uuid4().hex[:12]}",
+            "id": new_id,
             "name": normalized,
-            "embedding_files": [],
+            "embeddings": [],
             "created_at": now,
+            "source_job": str(job_id),
             "last_seen_at": now,
-            "sources": [],
         }
         loaded_store["identities"].append(identity)
 
-    emb_id = f"emb_{uuid.uuid4().hex[:12]}"
-    emb_rel = Path("embeddings") / identity["identity_id"] / f"{emb_id}.npy"
-    emb_abs = Path(identity_store_dir) / emb_rel
-    emb_abs.parent.mkdir(parents=True, exist_ok=True)
-    np.save(emb_abs, np.asarray(embedding, dtype=np.float32))
+    identity_id = str(identity.get("id"))
+    safe_track = str(track_id or metadata.get("track_id") or f"track_{uuid.uuid4().hex[:6]}")
+    emb_path = _identity_paths(identity_store_dir)["embeddings_dir"] / f"{identity_id}_{safe_track}.npy"
+    np.save(emb_path, np.asarray(embedding, dtype=np.float32))
 
-    identity["embedding_files"].append(str(emb_rel))
+    emb_ref = str(emb_path).replace("\\", "/")
+    if emb_ref not in identity["embeddings"]:
+        identity["embeddings"].append(emb_ref)
     identity["last_seen_at"] = now
-    identity["sources"].append(
-        {
-            "embedding_id": emb_id,
-            "job_id": metadata.get("job_id"),
-            "track_id": metadata.get("track_id"),
-            "timestamp": metadata.get("timestamp"),
-            "confidence": metadata.get("confidence"),
-            "source": metadata.get("source", "self_intro"),
-        }
-    )
 
-    save_identity_store(loaded_store, identity_store_dir=identity_store_dir)
-    return {"identity_id": identity["identity_id"], "name": identity["name"], "embedding_file": str(emb_rel)}
+    save_identities(loaded_store, identity_store_dir)
+    return {"identity_id": identity_id, "name": identity["name"], "embedding_file": emb_ref}
 
 
 def match_identity(
     embedding: np.ndarray,
-    store: Dict[str, Any],
+    store: Optional[Dict[str, Any]] = None,
     identity_store_dir: str = "identity_store",
     config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -192,29 +214,30 @@ def match_identity(
     if config:
         cfg.update(config)
 
+    loaded_store = store or load_identities(identity_store_dir)
     best: Optional[Dict[str, Any]] = None
-    for identity in store.get("identities", []):
-        for rel in identity.get("embedding_files", []):
-            emb_path = Path(identity_store_dir) / rel
+    for identity in loaded_store.get("identities", []):
+        for emb_file in identity.get("embeddings", []):
+            emb_path = Path(emb_file)
+            if not emb_path.exists():
+                emb_path = Path(identity_store_dir) / emb_file
             if not emb_path.exists():
                 continue
             score = cosine_similarity(embedding, np.load(emb_path))
             if best is None or score > best["score"]:
                 best = {
-                    "identity_id": identity["identity_id"],
-                    "name": identity["name"],
+                    "identity_id": identity.get("id"),
+                    "name": identity.get("name"),
                     "score": score,
-                    "embedding_file": rel,
                 }
 
     if best is None:
-        return {"status": "unknown", "score": 0.0, "identity_id": None, "name": "Unknown"}
-
+        return {"status": "unknown", "score": 0.0, "identity_id": None, "name": None}
     if best["score"] >= float(cfg["MATCH_THRESHOLD"]):
         return {"status": "matched", **best}
     if best["score"] >= float(cfg["MAYBE_THRESHOLD"]):
         return {"status": "maybe", **best}
-    return {"status": "unknown", "score": float(best["score"]), "identity_id": None, "name": "Unknown"}
+    return {"status": "unknown", "score": float(best["score"]), "identity_id": None, "name": None}
 
 
 def _build_speaker_track_hints(
@@ -388,7 +411,7 @@ def run_final_name_tagging(
             match = match_identity(np.load(emb_path), store, identity_store_dir=identity_store_dir, config=cfg)
             status = match["status"]
             if status == "matched":
-                payload.update({"label": match["name"], "label_source": "identity_store", "confidence": match["score"], "identity_id": match["identity_id"], "notes": "matched"})
+                payload.update({"label": match.get("name") or "Unknown", "label_source": "identity_store", "confidence": match["score"], "identity_id": match["identity_id"], "notes": "matched"})
             elif status == "maybe":
                 payload["notes"] = "maybe_match"
                 payload["candidate_suggestions"] = [{"identity_id": match["identity_id"], "name": match["name"], "score": match["score"]}]
@@ -430,7 +453,8 @@ def run_final_name_tagging(
                     enrolled = enroll_identity(
                         name,
                         np.load(emb_path),
-                        {"job_id": job_id, "track_id": track_id, "timestamp": seg_mid, "confidence": confidence, "source": "self_intro"},
+                        job_id,
+                        track_id,
                         identity_store_dir=identity_store_dir,
                         store=store,
                     )
