@@ -12,6 +12,7 @@ from src.name_tagging.final_name_tagging import (
     enroll_identity,
     load_identity_store,
     match_identity,
+    detect_names_from_segments,
     parse_names_from_transcript,
     run_final_name_tagging,
 )
@@ -102,7 +103,7 @@ def test_self_intro_uses_speaker_timeline_hint_when_segment_is_ambiguous(tmp_pat
         _mk_track("other_track", 0.0, 5.0, area=11800),
     ]
     segs = [
-        {"speaker_id": "S1", "start": 0.0, "end": 8.64, "text": "Hello, I'm Matthew and Sina."},
+        {"speaker_id": "S1", "start": 0.0, "end": 8.64, "text": "Hello, I'm Matthew and Sina. I'm a Filipino American born and raised in LA."},
         {"speaker_id": "S1", "start": 8.64, "end": 14.4, "text": "I studied graphic design."},
     ]
 
@@ -110,3 +111,27 @@ def test_self_intro_uses_speaker_timeline_hint_when_segment_is_ambiguous(tmp_pat
     by_track = {row["track_id"]: row for row in result["tracks"]}
     assert by_track["speaker_track"]["label"] == "Matthew"
     assert by_track["speaker_track"]["label_source"] == "self_intro"
+
+
+def test_detect_names_from_segments_multilingual_and_dedup():
+    segs = [
+        {
+            "speaker_id": "S1",
+            "start_ts": 0.0,
+            "end_ts": 2.0,
+            "transcript_text": "jag heter anu och det här är Sam. Sam pratar också.",
+        }
+    ]
+
+    result = detect_names_from_segments(segs)
+    assert len(result) == 1
+    names = result[0]["detected_names"]
+    assert any(row["name"] == "Anu" and row["type"] == "self" for row in names)
+    assert any(row["name"] == "Sam" and row["type"] == "mentioned" for row in names)
+    assert len([row for row in names if row["name"] == "Sam"]) == 1
+
+
+def test_detect_names_from_segments_no_names():
+    segs = [{"speaker_id": "S2", "start_ts": 1.0, "end_ts": 1.4, "transcript_text": "mmm ok yes"}]
+    result = detect_names_from_segments(segs)
+    assert result[0]["detected_names"] == []

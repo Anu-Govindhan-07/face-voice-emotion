@@ -9,7 +9,6 @@ This stage creates/updates:
 """
 
 import json
-import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,37 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})"
-_SELF_PATTERNS = [
-    re.compile(rf"\bi['’]?m\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bi am\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bmy name is\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bjag heter\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\bmitt namn är\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-]
-_MENTION_PATTERNS = [
-    re.compile(rf"\b(?:this is|that is|det här är|detta är)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\b(?:han heter|hon heter)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
-    re.compile(rf"\b{_NAME_TOKEN}\s+(?:is|är)\b", re.IGNORECASE),
-]
-_STOPWORDS = {
-    "jag",
-    "du",
-    "han",
-    "hon",
-    "det",
-    "den",
-    "mitt",
-    "namn",
-    "my",
-    "name",
-    "this",
-    "that",
-    "is",
-    "är",
-    "här",
-    "detta",
-}
+from .name_extraction import extract_name_signals
+
 _DEFAULT_CONFIG = {
     "MATCH_THRESHOLD": 0.45,
     "MAYBE_THRESHOLD": 0.35,
@@ -56,37 +26,38 @@ _DEFAULT_CONFIG = {
     "SPEAKER_HINT_CONFIDENCE": 0.82,
 }
 
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _normalize_name(raw: str) -> Optional[str]:
-    cleaned = re.sub(r"[^A-Za-zÅÄÖåäö\-']", "", (raw or "").strip())
+    value = (raw or "").strip().strip(".,!?;:\"'`()[]{}")
+    cleaned = "".join(ch for ch in value if ch.isalpha() or ch in "-'")
     if len(cleaned) < 2:
         return None
-    if cleaned.casefold() in _STOPWORDS:
-        return None
-    return cleaned[0].upper() + cleaned[1:].lower()
+    return "-".join(part[:1].upper() + part[1:].lower() for part in cleaned.split("-"))
+
+
+
+
+def detect_names_from_segments(diarized_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    signals = extract_name_signals(diarized_segments)
+    return [
+        {
+            "speaker_id": item.get("speaker_id", ""),
+            "start_time": float(item.get("start", 0.0)),
+            "end_time": float(item.get("end", 0.0)),
+            "detected_names": list(item.get("signals", [])),
+            "transcript_text": str(item.get("text", "")),
+        }
+        for item in signals
+    ]
 
 
 def parse_names_from_transcript(text: str) -> Dict[str, List[str]]:
-    self_names: List[str] = []
-    mentioned_names: List[str] = []
-    content = text or ""
-
-    for pattern in _SELF_PATTERNS:
-        for match in pattern.finditer(content):
-            name = _normalize_name(match.group(1))
-            if name and name not in self_names:
-                self_names.append(name)
-
-    for pattern in _MENTION_PATTERNS:
-        for match in pattern.finditer(content):
-            name = _normalize_name(match.group(1))
-            if name and name not in self_names and name not in mentioned_names:
-                mentioned_names.append(name)
-
+    parsed = detect_names_from_segments([{"speaker_id": "", "start": 0.0, "end": 0.0, "text": text or ""}])[0]["detected_names"]
+    self_names = [row["name"] for row in parsed if row["type"] == "self"]
+    mentioned_names = [row["name"] for row in parsed if row["type"] == "mentioned"]
     return {"self_names": self_names, "mentioned_names": mentioned_names}
 
 
@@ -423,19 +394,24 @@ def run_final_name_tagging(
             events.append({"type": "embedding_match", "track_id": track_id, "status": status, "score": match["score"], "identity_id": match.get("identity_id"), "name": match.get("name")})
         assignments[track_id] = payload
 
-    segments = sorted(diarized_segments, key=lambda seg: float(seg.get("start_ts", seg.get("start", 0.0))))
+    name_signals = detect_names_from_segments(diarized_segments)
+    segments = sorted(name_signals, key=lambda seg: float(seg.get("start_time", 0.0)))
     for segment in segments:
-        text = str(segment.get("transcript_text", segment.get("text", "")))
+        text = str(segment.get("transcript_text", ""))
         if not text.strip():
             continue
-        seg_start = float(segment.get("start_ts", segment.get("start", 0.0)))
-        seg_end = float(segment.get("end_ts", segment.get("end", seg_start)))
+        seg_start = float(segment.get("start_time", 0.0))
+        seg_end = float(segment.get("end_time", seg_start))
         seg_mid = (seg_start + seg_end) / 2.0
         speaker_id = str(segment.get("speaker_id") or "")
-        names = parse_names_from_transcript(text)
+        names = segment.get("detected_names", [])
 
-        for name in names["self_names"]:
+        for detection in names:
+            if detection.get("type") != "self":
+                continue
+            name = str(detection.get("name") or "")
             track_id, confidence, reason = _resolve_speaker_track(face_tracks, seg_start, seg_end, asd)
+            confidence = max(confidence, float(detection.get("confidence", 0.0)))
             hint = speaker_hints.get(speaker_id)
             if (not track_id or confidence < float(cfg["MIN_ASSIGN_CONFIDENCE"])) and hint and hint["confidence"] >= float(cfg["SPEAKER_HINT_CONFIDENCE"]):
                 track_id = hint["track_id"]
@@ -459,7 +435,10 @@ def run_final_name_tagging(
                     )
                     assignments[track_id]["identity_id"] = enrolled["identity_id"]
 
-        for name in names["mentioned_names"]:
+        for detection in names:
+            if detection.get("type") != "mentioned":
+                continue
+            name = str(detection.get("name") or "")
             speaker_track_id, _, _ = _resolve_speaker_track(face_tracks, seg_start, seg_end, asd)
             hint = speaker_hints.get(speaker_id)
             if hint and hint["confidence"] >= float(cfg["SPEAKER_HINT_CONFIDENCE"]):
@@ -470,6 +449,7 @@ def run_final_name_tagging(
                 speaker_track_id=speaker_track_id,
                 temporal_window_seconds=float(cfg["TEMPORAL_WINDOW_SECONDS"]),
             )
+            confidence = max(confidence, float(detection.get("confidence", 0.0)))
             event_base = {"type": "mention", "speaker_id": speaker_id or None, "name": name, "segment_start": seg_start, "segment_end": seg_end}
             if not track_id or confidence < float(cfg["MIN_ASSIGN_CONFIDENCE"]):
                 events.append({**event_base, "track_id": None, "confidence": confidence, "notes": reason})
