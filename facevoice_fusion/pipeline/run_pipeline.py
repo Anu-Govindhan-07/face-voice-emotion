@@ -8,6 +8,7 @@ from app.events import broadcaster
 from app.jobs import job_store
 from app.storage import job_file
 from src.name_tagging.final_name_assignment import assign_names
+from src.pipeline.final_track_summary import build_track_summary
 
 from .associate import associate_speakers
 from .audio_extract import extract_audio
@@ -181,6 +182,29 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
             },
         )
         artifacts["associations"] = str(assoc_path)
+
+        emotion_events = []
+        for track_id, emotion_payload in emotions.items():
+            for row in emotion_payload.get("timeline", []):
+                emotion_events.append({
+                    "track_id": track_id,
+                    "start": float(row.get("start", 0.0)),
+                    "ts": float(row.get("start", 0.0)),
+                    "emotion": row.get("label", "neutral"),
+                    "confidence": float(row.get("conf", 0.0)),
+                })
+
+        build_track_summary(
+            job_id=job_id,
+            face_tracks=tracks,
+            emotion_events=emotion_events,
+            diarized_segments=speakers,
+            asr_segments=transcript_segments,
+            identity_store=_IdentityStoreAdapter(job_id),
+            config=None,
+        )
+        final_summary_path = job_file(job_id, "final_track_summary.json")
+        artifacts["final_track_summary"] = str(final_summary_path)
 
         job_store.update_job(job_id, stage="export", progress=90, artifacts=artifacts)
         _publish(job_id, "job.progress", {"stage": "associate", "progress": 90})
