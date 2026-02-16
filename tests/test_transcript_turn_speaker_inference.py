@@ -10,6 +10,7 @@ from pipeline import transcribe as transcribe_module
 from pipeline.transcribe import (
     attribute_speakers_to_segments,
     build_diarization_from_transcript_segments,
+    robust_speaker_attribution,
     infer_speakers_from_transcript_turns,
     transcribe_and_attribute,
 )
@@ -109,3 +110,45 @@ def test_attribute_speakers_to_segments_overwrite_reassigns_stale_cached_speaker
 
     assert attributed[0]["speaker_id"] == "S1"
     assert attributed[1]["speaker_id"] == "S2"
+
+
+def test_robust_speaker_attribution_overwrites_stale_transcript_when_diarization_is_multi_speaker():
+    transcript_segments = [
+        {"start": 0.0, "end": 1.0, "text": "a", "speaker_id": "S1"},
+        {"start": 1.0, "end": 2.0, "text": "b", "speaker_id": "S1"},
+    ]
+    diarization_segments = [
+        {"speaker_id": "S1", "start": 0.0, "end": 1.0},
+        {"speaker_id": "S2", "start": 1.0, "end": 2.0},
+    ]
+
+    bundle = robust_speaker_attribution(diarization_segments, transcript_segments)
+
+    assert bundle["transcript"][0]["speaker_id"] == "S1"
+    assert bundle["transcript"][1]["speaker_id"] == "S2"
+
+
+def test_robust_speaker_attribution_preserves_cached_multi_speaker_transcript_when_diarization_single_speaker():
+    transcript_segments = [
+        {"start": 0.0, "end": 1.0, "text": "a", "speaker_id": "S1"},
+        {"start": 1.0, "end": 2.0, "text": "b", "speaker_id": "S2"},
+    ]
+    diarization_segments = [{"speaker_id": "S1", "start": 0.0, "end": 2.0}]
+
+    bundle = robust_speaker_attribution(diarization_segments, transcript_segments)
+
+    assert [seg["speaker_id"] for seg in bundle["transcript"]] == ["S1", "S2"]
+    assert len({seg["speaker_id"] for seg in bundle["diarization"]}) == 2
+
+
+def test_robust_speaker_attribution_inference_failure_is_non_destructive():
+    transcript_segments = [
+        {"start": 0.0, "end": 1.0, "text": "hello there"},
+        {"start": 1.0, "end": 2.0, "text": "general kenobi"},
+    ]
+    diarization_segments = [{"speaker_id": "S1", "start": 0.0, "end": 2.0}]
+
+    bundle = robust_speaker_attribution(diarization_segments, transcript_segments)
+
+    assert bundle["diarization"] == diarization_segments
+    assert bundle["transcript"] == transcript_segments
