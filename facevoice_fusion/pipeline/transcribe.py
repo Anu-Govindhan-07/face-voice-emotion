@@ -300,29 +300,44 @@ def robust_speaker_attribution(
       }
     """
     diar_unique = _count_unique_speakers(diarization_segments or [])
+    tr_unique = _count_unique_speakers(transcript_segments or [])
     raw_speakers = sorted({str(seg.get("speaker_id")) for seg in diarization_segments or [] if seg.get("speaker_id")})
+    transcript_before = sorted({str(seg.get("speaker_id")) for seg in transcript_segments or [] if seg.get("speaker_id")})
     console.log(f"Raw diarization speakers: {raw_speakers}")
+    console.log(f"Transcript speakers before robust attribution: {transcript_before}")
 
+    # Case 1: diarization already has multiple speakers -> force fresh attribution
     if diarization_segments and diar_unique >= 2:
         attributed = attribute_speakers_to_segments(diarization_segments, transcript_segments, overwrite=True)
         transcript_speakers = sorted({str(seg.get("speaker_id")) for seg in attributed if seg.get("speaker_id")})
         console.log(f"Final diarization speakers: {raw_speakers}")
         console.log(f"Transcript speakers after attribution: {transcript_speakers}")
+        if len(raw_speakers) < 2 and len(transcript_speakers) >= 2:
+            console.log("[yellow]Warning: final diarization is single-speaker while transcript has multiple speakers.[/yellow]")
         return {"diarization": diarization_segments, "transcript": attributed}
 
-    # diarization is empty or single-speaker -> infer from transcript
+    # Case 2.1: cached transcript already has multiple speakers -> preserve + rebuild diarization
+    if tr_unique >= 2:
+        rebuilt_diar = build_diarization_from_transcript_segments(transcript_segments)
+        final_speakers = sorted({str(seg.get("speaker_id")) for seg in rebuilt_diar if seg.get("speaker_id")})
+        console.log(f"Final diarization speakers: {final_speakers}")
+        console.log(f"Transcript speakers after attribution: {transcript_before}")
+        return {"diarization": rebuilt_diar, "transcript": transcript_segments}
+
+    # Case 2.2: diarization single-speaker and transcript single-speaker -> infer speaker turns
     inferred = infer_speakers_from_transcript_turns(transcript_segments, max_speakers=max_speakers)
     inf_unique = _count_unique_speakers(inferred)
 
+    # Case 2.3: inference failed -> keep inputs unchanged (non-destructive)
     if inf_unique < 2:
-        # still single speaker; fallback to whatever diarization gave
         final_diar = diarization_segments or []
-        attributed = attribute_speakers_to_segments(final_diar, transcript_segments, overwrite=True)
         final_speakers = sorted({str(seg.get("speaker_id")) for seg in final_diar if seg.get("speaker_id")})
-        transcript_speakers = sorted({str(seg.get("speaker_id")) for seg in attributed if seg.get("speaker_id")})
+        transcript_speakers = sorted({str(seg.get("speaker_id")) for seg in transcript_segments if seg.get("speaker_id")})
         console.log(f"Final diarization speakers: {final_speakers}")
         console.log(f"Transcript speakers after attribution: {transcript_speakers}")
-        return {"diarization": final_diar, "transcript": attributed}
+        if len(final_speakers) < 2 and len(transcript_speakers) >= 2:
+            console.log("[yellow]Warning: final diarization is single-speaker while transcript has multiple speakers.[/yellow]")
+        return {"diarization": final_diar, "transcript": transcript_segments}
 
     rebuilt_diar = build_diarization_from_transcript_segments(inferred)
     attributed = attribute_speakers_to_segments(rebuilt_diar, transcript_segments, overwrite=True)
@@ -330,6 +345,8 @@ def robust_speaker_attribution(
     transcript_speakers = sorted({str(seg.get("speaker_id")) for seg in attributed if seg.get("speaker_id")})
     console.log(f"Final diarization speakers: {final_speakers}")
     console.log(f"Transcript speakers after attribution: {transcript_speakers}")
+    if len(final_speakers) < 2 and len(transcript_speakers) >= 2:
+        console.log("[yellow]Warning: final diarization is single-speaker while transcript has multiple speakers.[/yellow]")
 
     return {"diarization": rebuilt_diar, "transcript": attributed}
 
