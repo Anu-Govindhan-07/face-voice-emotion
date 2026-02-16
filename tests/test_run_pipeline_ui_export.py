@@ -58,14 +58,20 @@ def test_run_pipeline_rebuilds_diarization_from_transcript_and_overwrites_ui(tmp
     monkeypatch.setattr(run_pipeline_module, "remember_identity_embedding", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(run_pipeline_module, "infer_emotions", lambda *_args, **_kwargs: {"T1": {"dominant": "neutral", "timeline": []}})
     monkeypatch.setattr(run_pipeline_module, "diarize_audio", lambda *_args, **_kwargs: [{"speaker_id": "S1", "start": 0.0, "end": 6.0}])
-    monkeypatch.setattr(
-        run_pipeline_module,
-        "transcribe_audio",
-        lambda *_args, **_kwargs: [
+    def _transcribe_and_attribute(**_kwargs):
+        diarization = [
+            {"speaker_id": "S1", "start": 0.0, "end": 3.0},
+            {"speaker_id": "S2", "start": 3.0, "end": 6.0},
+        ]
+        transcript = [
             {"start": 0.0, "end": 3.0, "text": "hello", "speaker_id": "S1"},
             {"start": 3.0, "end": 6.0, "text": "hi", "speaker_id": "S2"},
-        ],
-    )
+        ]
+        (job_dir / "diarization.json").write_text(json.dumps({"segments": diarization}))
+        (job_dir / "transcript.json").write_text(json.dumps({"segments": transcript}))
+        return {"diarization": diarization, "transcript": transcript}
+
+    monkeypatch.setattr(run_pipeline_module, "transcribe_and_attribute", _transcribe_and_attribute)
     monkeypatch.setattr(run_pipeline_module, "associate_speakers", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(run_pipeline_module, "assign_names", lambda **_kwargs: {"tracks": [], "event_log": []})
     monkeypatch.setattr(run_pipeline_module, "build_track_summary", lambda **_kwargs: None)
