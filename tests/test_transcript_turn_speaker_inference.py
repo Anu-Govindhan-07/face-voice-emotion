@@ -128,6 +128,23 @@ def test_robust_speaker_attribution_overwrites_stale_transcript_when_diarization
     assert bundle["transcript"][1]["speaker_id"] == "S2"
 
 
+def test_robust_speaker_attribution_uses_nearest_turn_when_no_overlap():
+    transcript_segments = [
+        {"start": 0.0, "end": 1.0, "text": "a", "speaker_id": "S1"},
+        {"start": 1.0, "end": 2.0, "text": "b", "speaker_id": "S1"},
+    ]
+    # Gap between diarization turns and transcript boundaries can happen due to model timing drift.
+    diarization_segments = [
+        {"speaker_id": "S1", "start": 2.0, "end": 3.0},
+        {"speaker_id": "S2", "start": 3.0, "end": 4.0},
+    ]
+
+    bundle = robust_speaker_attribution(diarization_segments, transcript_segments)
+
+    assert bundle["transcript"][0]["speaker_id"] == "S1"
+    assert bundle["transcript"][1]["speaker_id"] == "S1"
+
+
 def test_robust_speaker_attribution_preserves_cached_multi_speaker_transcript_when_diarization_single_speaker():
     transcript_segments = [
         {"start": 0.0, "end": 1.0, "text": "a", "speaker_id": "S1"},

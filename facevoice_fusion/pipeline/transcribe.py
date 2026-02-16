@@ -153,6 +153,9 @@ def _best_speaker_for_segment(speakers: List[dict], segment: dict) -> Optional[s
     best_overlap = 0.0
     seg_start = float(segment.get("start", 0.0))
     seg_end = float(segment.get("end", seg_start))
+    seg_mid = (seg_start + seg_end) / 2.0
+    nearest_speaker_id = None
+    nearest_distance = float("inf")
 
     for speaker in speakers or []:
         speaker_id = speaker.get("speaker_id")
@@ -163,7 +166,14 @@ def _best_speaker_for_segment(speakers: List[dict], segment: dict) -> Optional[s
             best_overlap = ov
             best_speaker_id = speaker_id
 
-    return best_speaker_id
+        # Fallback when there is no direct overlap: choose nearest diarization turn by midpoint.
+        speaker_mid = (float(speaker.get("start", 0.0)) + float(speaker.get("end", 0.0))) / 2.0
+        distance = abs(seg_mid - speaker_mid)
+        if distance < nearest_distance:
+            nearest_distance = distance
+            nearest_speaker_id = speaker_id
+
+    return best_speaker_id or nearest_speaker_id
 
 
 def attribute_speakers_to_segments(
