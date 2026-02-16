@@ -45,6 +45,20 @@ The pipeline uses the Hugging Face model `nateraw/fer` by default. Override with
 export EMOTION_MODEL_NAME=nateraw/fer
 ```
 
+## Transcription (ASR) configuration
+The pipeline now defaults to **`openai/whisper-large-v3`** for stronger transcription quality on names and introductions.
+
+You can tune ASR behavior with environment variables:
+
+```bash
+export ASR_MODEL_NAME="openai/whisper-large-v3"
+export ASR_NUM_BEAMS=5
+export ASR_CHUNK_LENGTH_S=30
+export ASR_STRIDE_LENGTH_S=5
+# optional language hint, e.g. en, sv, fil
+export ASR_LANGUAGE_HINT=""
+```
+
 ## Face detection tuning
 If you see false face boxes, raise the minimum confidence or size thresholds:
 
@@ -85,8 +99,8 @@ Including:
 The identity store lives in `identity_store/identities.json` and acts as a persistent memory layer:
 - Every processed face embedding is stored automatically (even before a name is assigned).
 - If a later upload matches an existing face and that identity has a name, the matched name is rendered in the face-tracking overlay label.
-- The pipeline runs ASR and infers spoken names for association metadata only by default; it does **not** auto-rename/enroll unknown faces from speech unless explicitly enabled.
-- To enable speech-driven auto-enrollment (higher risk of wrong labels), set `ALLOW_TRANSCRIPT_IDENTITY_ENROLL=1`.
+- The pipeline runs ASR and infers spoken names for association metadata by default.
+- Speech-driven auto-enrollment is controlled by `ALLOW_TRANSCRIPT_IDENTITY_ENROLL` (default `0`). Set `ALLOW_TRANSCRIPT_IDENTITY_ENROLL=1` to persist high-confidence self-introduced names to the identity store.
 - Matching is optimized with per-person centroid indexes and an in-memory embedding cache for better throughput on large/high-quality videos.
 
 You can assign or update a name for a detected track:

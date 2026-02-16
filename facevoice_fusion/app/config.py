@@ -26,7 +26,11 @@ FACE_DETECT_MIN_SIZE = int(os.getenv("FACE_DETECT_MIN_SIZE", "40"))
 
 _raw_emotion_model = os.getenv("EMOTION_MODEL_NAME", "trpakov/vit-face-expression")
 EMOTION_MODEL_NAME = "trpakov/vit-face-expression" if _raw_emotion_model == "nateraw/fer" else _raw_emotion_model
-ASR_MODEL_NAME = os.getenv("ASR_MODEL_NAME", "openai/whisper-tiny")
+ASR_MODEL_NAME = os.getenv("ASR_MODEL_NAME", "openai/whisper-large-v3")
+ASR_CHUNK_LENGTH_S = int(os.getenv("ASR_CHUNK_LENGTH_S", "30"))
+ASR_STRIDE_LENGTH_S = int(os.getenv("ASR_STRIDE_LENGTH_S", "5"))
+ASR_NUM_BEAMS = int(os.getenv("ASR_NUM_BEAMS", "5"))
+ASR_LANGUAGE_HINT = os.getenv("ASR_LANGUAGE_HINT", "")
 ALLOW_TRANSCRIPT_IDENTITY_ENROLL = os.getenv("ALLOW_TRANSCRIPT_IDENTITY_ENROLL", "0") == "1"
 
 MODEL_VERSIONS = {

@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Dict, List
 
+from app.config import ALLOW_TRANSCRIPT_IDENTITY_ENROLL
 from app.events import broadcaster
 from app.jobs import job_store
 from app.storage import job_file
@@ -144,6 +145,10 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         assoc_path = job_file(job_id, "associations.json")
         associations = associate_speakers(tracks, speakers, assoc_path)
 
+        name_assignment_config = {"auto_enroll_confidence": 0.90}
+        if not ALLOW_TRANSCRIPT_IDENTITY_ENROLL:
+            name_assignment_config["auto_enroll_confidence"] = 1.01
+
         assignment = assign_names(
             job_id=job_id,
             face_tracks=tracks,
@@ -158,7 +163,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
             ],
             identity_store=_IdentityStoreAdapter(job_id),
             asd=None,
-            config=None,
+            config=name_assignment_config,
         )
         label_by_track = {item["track_id"]: item for item in assignment.get("tracks", [])}
         for track in tracks:

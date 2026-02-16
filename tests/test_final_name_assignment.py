@@ -110,3 +110,27 @@ def test_identity_store_matched_maybe_unknown(tmp_path, monkeypatch):
     assert by_track["t2"]["label"] == "Unknown"
     assert by_track["t2"]["metadata"]["candidate"]["name"] == "Noah"
     assert by_track["t3"]["label"] == "Unknown"
+
+
+def test_self_intro_full_name_is_preserved(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    job_id = "job_full_name"
+    _write_emb(job_id, "t1")
+    tracks = [_mk_track("t1", 0, 10)]
+    segments = [{"speaker_id": "S1", "start_ts": 1.0, "end_ts": 2.0, "transcript_text": "hello, i'm matthew encina"}]
+    asd = {1.2: {"t1": 0.95}}
+
+    result = assign_names(job_id, tracks, segments, MockIdentityStore({}), asd=asd)
+    assert result["tracks"][0]["label"] == "Matthew Encina"
+
+
+def test_self_intro_conjunction_does_not_merge_names(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    job_id = "job_name_conjunction"
+    _write_emb(job_id, "t1")
+    tracks = [_mk_track("t1", 0, 10)]
+    segments = [{"speaker_id": "S1", "start_ts": 1.0, "end_ts": 2.0, "transcript_text": "hello, i'm matthew and sina"}]
+    asd = {1.2: {"t1": 0.95}}
+
+    result = assign_names(job_id, tracks, segments, MockIdentityStore({}), asd=asd)
+    assert result["tracks"][0]["label"] == "Matthew"

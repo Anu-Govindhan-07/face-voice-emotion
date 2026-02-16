@@ -5,10 +5,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from app.config import ASR_MODEL_NAME
+from app.config import ASR_CHUNK_LENGTH_S, ASR_LANGUAGE_HINT, ASR_MODEL_NAME, ASR_NUM_BEAMS, ASR_STRIDE_LENGTH_S
 from .utils import console, save_json
 
-_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})"
+_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30}(?:\s+[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})?)"
 _SELF_IDENTIFICATION_PATTERNS = [
     re.compile(rf"\bmy name is\s+{_NAME_TOKEN}\b", re.IGNORECASE),
     re.compile(rf"\bi am\s+{_NAME_TOKEN}\b", re.IGNORECASE),
@@ -29,7 +29,9 @@ _MENTION_PATTERNS = [
 _STOPWORDS = {
     "jag", "du", "han", "hon", "vi", "ni", "dom", "de", "det", "den", "här", "där",
     "and", "or", "the", "a", "an", "this", "that", "is", "are", "name", "mitt", "namn",
+    "im", "am",
 }
+_NAME_SPLITTER = re.compile(r"\s+(?:and|och|or|eller|und)\s+", re.IGNORECASE)
 
 
 def transcribe_audio(audio_path: Path, output_path: Path) -> List[dict]:
@@ -42,11 +44,15 @@ def transcribe_audio(audio_path: Path, output_path: Path) -> List[dict]:
         asr = pipeline(
             task="automatic-speech-recognition",
             model=ASR_MODEL_NAME,
-            chunk_length_s=20,
-            stride_length_s=4,
+            chunk_length_s=ASR_CHUNK_LENGTH_S,
+            stride_length_s=ASR_STRIDE_LENGTH_S,
             return_timestamps=True,
+            model_kwargs={"attn_implementation": "sdpa"},
         )
-        result = asr(str(audio_path), return_timestamps=True)
+        generate_kwargs = {"num_beams": ASR_NUM_BEAMS}
+        if ASR_LANGUAGE_HINT:
+            generate_kwargs["language"] = ASR_LANGUAGE_HINT
+        result = asr(str(audio_path), return_timestamps=True, generate_kwargs=generate_kwargs)
         chunks = result.get("chunks", []) if isinstance(result, dict) else []
         for chunk in chunks:
             ts = chunk.get("timestamp")
@@ -70,10 +76,17 @@ def _normalize_name(candidate: str) -> Optional[str]:
     cleaned = candidate.strip(" .,!?:;\"'()[]{}")
     if len(cleaned) < 2:
         return None
-    lowered = cleaned.casefold()
-    if lowered in _STOPWORDS:
+    cleaned = _NAME_SPLITTER.split(cleaned, maxsplit=1)[0].strip()
+    parts = [part for part in cleaned.split() if part]
+    if not parts:
         return None
-    return cleaned[0].upper() + cleaned[1:].lower()
+    normalized_parts = []
+    for part in parts[:2]:
+        lowered = part.casefold()
+        if lowered in _STOPWORDS:
+            return None
+        normalized_parts.append(part[0].upper() + part[1:].lower())
+    return " ".join(normalized_parts)
 
 
 def _extract_self_identification_name(text: str) -> Optional[str]:
