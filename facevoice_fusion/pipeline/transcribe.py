@@ -5,10 +5,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from app.config import ASR_MODEL_NAME
+from app.config import ASR_CHUNK_LENGTH_S, ASR_LANGUAGE_HINT, ASR_MODEL_NAME, ASR_NUM_BEAMS, ASR_STRIDE_LENGTH_S
 from .utils import console, save_json
 
-_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})"
+_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30}(?:\s+[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})?)"
 _SELF_IDENTIFICATION_PATTERNS = [
     re.compile(rf"\bmy name is\s+{_NAME_TOKEN}\b", re.IGNORECASE),
     re.compile(rf"\bi am\s+{_NAME_TOKEN}\b", re.IGNORECASE),
@@ -29,7 +29,9 @@ _MENTION_PATTERNS = [
 _STOPWORDS = {
     "jag", "du", "han", "hon", "vi", "ni", "dom", "de", "det", "den", "här", "där",
     "and", "or", "the", "a", "an", "this", "that", "is", "are", "name", "mitt", "namn",
+    "im", "am",
 }
+_NAME_SPLITTER = re.compile(r"\s+(?:and|och|or|eller|und)\s+", re.IGNORECASE)
 
 
 def transcribe_audio(audio_path: Path, output_path: Path) -> List[dict]:
@@ -42,11 +44,15 @@ def transcribe_audio(audio_path: Path, output_path: Path) -> List[dict]:
         asr = pipeline(
             task="automatic-speech-recognition",
             model=ASR_MODEL_NAME,
-            chunk_length_s=20,
-            stride_length_s=4,
+            chunk_length_s=ASR_CHUNK_LENGTH_S,
+            stride_length_s=ASR_STRIDE_LENGTH_S,
             return_timestamps=True,
+            model_kwargs={"attn_implementation": "sdpa"},
         )
-        result = asr(str(audio_path), return_timestamps=True)
+        generate_kwargs = {"num_beams": ASR_NUM_BEAMS}
+        if ASR_LANGUAGE_HINT:
+            generate_kwargs["language"] = ASR_LANGUAGE_HINT
+        result = asr(str(audio_path), return_timestamps=True, generate_kwargs=generate_kwargs)
         chunks = result.get("chunks", []) if isinstance(result, dict) else []
         for chunk in chunks:
             ts = chunk.get("timestamp")
@@ -70,10 +76,17 @@ def _normalize_name(candidate: str) -> Optional[str]:
     cleaned = candidate.strip(" .,!?:;\"'()[]{}")
     if len(cleaned) < 2:
         return None
-    lowered = cleaned.casefold()
-    if lowered in _STOPWORDS:
+    cleaned = _NAME_SPLITTER.split(cleaned, maxsplit=1)[0].strip()
+    parts = [part for part in cleaned.split() if part]
+    if not parts:
         return None
-    return cleaned[0].upper() + cleaned[1:].lower()
+    normalized_parts = []
+    for part in parts[:2]:
+        lowered = part.casefold()
+        if lowered in _STOPWORDS:
+            return None
+        normalized_parts.append(part[0].upper() + part[1:].lower())
+    return " ".join(normalized_parts)
 
 
 def _extract_self_identification_name(text: str) -> Optional[str]:
@@ -125,6 +138,82 @@ def attribute_speakers_to_segments(speakers: List[dict], transcript_segments: Li
         attributed.append(enriched)
     return attributed
 
+
+
+
+_QUESTION_TO_OTHER_PATTERNS = [
+    re.compile(r"\bvad heter du\b", re.IGNORECASE),
+    re.compile(r"\bwhat(?:'s| is) your name\b", re.IGNORECASE),
+    re.compile(r"\bvad kommer du fr(?:a|å)n\b", re.IGNORECASE),
+    re.compile(r"\bwhere are you from\b", re.IGNORECASE),
+]
+
+
+def _asks_other_person(text: str) -> bool:
+    return any(pattern.search(text or "") for pattern in _QUESTION_TO_OTHER_PATTERNS)
+
+
+def infer_speakers_from_transcript_turns(transcript_segments: List[dict], max_speakers: int = 6) -> List[dict]:
+    if not transcript_segments:
+        return []
+
+    speaker_ids = [f"S{idx}" for idx in range(1, max(2, int(max_speakers)) + 1)]
+    name_to_speaker: Dict[str, str] = {}
+    known_speakers: List[str] = ["S1"]
+    current_speaker = "S1"
+    switch_next = False
+
+    output: List[dict] = []
+    for segment in transcript_segments:
+        enriched = dict(segment)
+        text = str(enriched.get("text") or "")
+
+        if switch_next and known_speakers:
+            if len(known_speakers) == 1:
+                next_speaker = "S2"
+                if next_speaker not in known_speakers:
+                    known_speakers.append(next_speaker)
+            else:
+                idx = known_speakers.index(current_speaker) if current_speaker in known_speakers else -1
+                next_speaker = known_speakers[(idx + 1) % len(known_speakers)]
+            current_speaker = next_speaker
+            switch_next = False
+
+        intro_name = _extract_self_identification_name(text)
+        if intro_name:
+            if intro_name not in name_to_speaker:
+                if len(name_to_speaker) < len(speaker_ids):
+                    sid = speaker_ids[len(name_to_speaker)]
+                else:
+                    sid = speaker_ids[-1]
+                name_to_speaker[intro_name] = sid
+                if sid not in known_speakers:
+                    known_speakers.append(sid)
+            current_speaker = name_to_speaker[intro_name]
+
+        enriched["speaker_id"] = current_speaker
+        output.append(enriched)
+
+        if _asks_other_person(text):
+            switch_next = True
+
+    return output
+
+
+def build_diarization_from_transcript_segments(transcript_segments: List[dict]) -> List[dict]:
+    diarization: List[dict] = []
+    ordered = sorted(transcript_segments, key=lambda seg: float(seg.get("start", 0.0)))
+    for segment in ordered:
+        speaker_id = str(segment.get("speaker_id") or "S1")
+        start = float(segment.get("start", 0.0))
+        end = float(segment.get("end", start))
+        if end <= start:
+            continue
+        if diarization and diarization[-1]["speaker_id"] == speaker_id and start <= float(diarization[-1]["end"]) + 0.15:
+            diarization[-1]["end"] = max(float(diarization[-1]["end"]), end)
+            continue
+        diarization.append({"speaker_id": speaker_id, "start": start, "end": end, "conf": 0.5})
+    return diarization
 
 def infer_name_signals(speakers: List[dict], transcript_segments: List[dict]) -> Dict[str, Dict[str, str]]:
     speaker_self_names: Dict[str, str] = {}
