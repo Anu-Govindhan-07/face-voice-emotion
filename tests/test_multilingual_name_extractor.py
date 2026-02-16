@@ -32,3 +32,27 @@ def test_false_positive_accountable_filtered():
         config={},
     )
     assert rows[0]["signals"] == []
+
+
+def test_swedish_mentioned_pattern_extracts_name():
+    rows = extract_name_signals_from_segments(
+        [{"start": 0.0, "end": 2.0, "speaker_id": "S1", "text": "Han heter Johan"}],
+        config={},
+    )
+    assert any(s["name"] == "Johan" and s["type"] == "mentioned" for s in rows[0]["signals"])
+
+
+def test_false_positive_capitalized_vocabulary_filtered():
+    rows = extract_name_signals_from_segments(
+        [{"start": 0.0, "end": 2.0, "speaker_id": "S1", "text": "I'm Taking this seriously"}],
+        config={},
+    )
+    assert rows[0]["signals"] == []
+
+
+def test_false_positive_gonna_filtered():
+    rows = extract_name_signals_from_segments(
+        [{"start": 0.0, "end": 2.0, "speaker_id": "S1", "text": "I'm Gonna explain"}],
+        config={},
+    )
+    assert rows[0]["signals"] == []

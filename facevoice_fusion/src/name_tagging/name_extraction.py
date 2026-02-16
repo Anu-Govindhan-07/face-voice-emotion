@@ -18,10 +18,11 @@ _SELF_PATTERNS = [
 ]
 _MENTION_PATTERNS = [
     re.compile(r"\b(?:this is|det här är|meet)\s+([^.!?\n]+)", re.IGNORECASE),
+    re.compile(r"\b(?:han heter|hon heter|él se llama|ella se llama|il s'appelle|elle s'appelle)\s+([^.!?\n]+)", re.IGNORECASE),
 ]
 
 _SELF_CUE = re.compile(r"\b(i am|i['’]m|my name is|jag heter|mitt namn är)\b", re.IGNORECASE)
-_MENTION_CUE = re.compile(r"\b(this is|det här är|meet)\b", re.IGNORECASE)
+_MENTION_CUE = re.compile(r"\b(this is|det här är|meet|han heter|hon heter|él se llama|ella se llama|il s'appelle|elle s'appelle)\b", re.IGNORECASE)
 _SPLIT_NAMES = re.compile(r"\s*(?:,|;|&|\band\b|\boch\b)\s*", re.IGNORECASE)
 
 _COMMON_WORD_BLOCKLIST = {
@@ -37,6 +38,14 @@ _COMMON_WORD_BLOCKLIST = {
     "blessed",
     "strong",
     "great",
+    "taking",
+    "gonna",
+    "going",
+    "doing",
+    "being",
+    "feeling",
+    "not",
+    "unknown",
 }
 _PRONOUNS_AND_DETERMINERS = {
     "i",
@@ -144,6 +153,23 @@ def _looks_title_cased(candidate: str) -> bool:
     return bool(tokens) and all(tok[:1].isupper() for tok in tokens)
 
 
+def _looks_non_name_vocabulary(candidate: str) -> bool:
+    lower_tokens = [tok.casefold() for tok in candidate.split() if tok]
+    if not lower_tokens:
+        return True
+
+    first = lower_tokens[0]
+    if first.endswith("ing"):
+        return True
+    if first in {"gonna", "wanna", "gotta", "not", "unknown"}:
+        return True
+
+    non_name_tokens = _COMMON_WORD_BLOCKLIST | _PRONOUNS_AND_DETERMINERS | {"this", "that", "seriously", "explain"}
+    if any(tok in non_name_tokens for tok in lower_tokens):
+        return True
+    return False
+
+
 def is_valid_name_candidate(token_or_span: str, context: str, ner_confirmed: bool = False, allow_lowercase: bool = False) -> bool:
     candidate = (token_or_span or "").strip()
     if not candidate:
@@ -162,6 +188,8 @@ def is_valid_name_candidate(token_or_span: str, context: str, ner_confirmed: boo
     if lower in _LOCATION_OR_ACRONYM:
         return False
     if normalized.isupper() and len(normalized) <= 3:
+        return False
+    if _looks_non_name_vocabulary(normalized) and not ner_confirmed:
         return False
 
     # reject lowercase words unless explicitly whitelisted or NER-confirmed
