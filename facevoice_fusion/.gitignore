@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 *.npy
-*.log
+*.log                               cx§
 .env
+git facevoice_fusion/data/
+/facevoice_fusion/data/
+/facevoice_fusion/identity_store/
 facevoice_fusion/data/
