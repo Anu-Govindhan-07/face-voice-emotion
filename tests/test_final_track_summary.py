@@ -31,6 +31,7 @@ def test_final_summary_contains_required_fields(tmp_path, monkeypatch):
 
     assert row["track_id"] == "T1"
     assert row["speaker_id"] == "S1"
+    assert "speaker_mapping_confidence" in row
     assert isinstance(row["detected_names"], list)
     assert "recognized_identity" in row
     assert "dominant_emotion" in row and "current_emotion" in row
