@@ -12,7 +12,7 @@ from app.config import (
     ASR_NUM_BEAMS,
     ASR_STRIDE_LENGTH_S,
 )
-from .utils import console, save_json
+from .utils import console, load_json, save_json
 
 # ============================================================
 # Name extraction regex (kept from your code)
@@ -380,7 +380,16 @@ def transcribe_and_attribute(
         "transcript": [...],
       }
     """
-    transcript_segments = transcribe_audio(audio_path, transcript_output_path)
+    transcript_segments: List[dict] = []
+    if transcript_output_path.exists():
+        try:
+            transcript_segments = load_json(transcript_output_path).get("segments", [])
+        except Exception as exc:
+            console.log(f"Failed to read existing transcript artifact; rerunning ASR: {exc}")
+
+    if not transcript_segments:
+        transcript_segments = transcribe_audio(audio_path, transcript_output_path)
+
     bundle = robust_speaker_attribution(diarization_segments, transcript_segments, max_speakers=max_speakers)
 
     if diarization_output_path is not None:

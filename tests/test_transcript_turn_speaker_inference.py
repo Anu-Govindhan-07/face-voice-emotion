@@ -67,3 +67,28 @@ def test_transcribe_and_attribute_rebuilds_diarization_when_input_is_single_spea
     assert len(final_speakers) >= 2
     assert len({seg["speaker_id"] for seg in transcript_payload["segments"]}) >= 2
     assert len({seg["speaker_id"] for seg in diarization_payload["segments"]}) >= 2
+
+
+def test_transcribe_and_attribute_uses_existing_transcript_artifact(tmp_path, monkeypatch):
+    existing_segments = [
+        {"start": 0.0, "end": 2.0, "text": "Hej, jag heter Ova. Vad heter du?"},
+        {"start": 2.0, "end": 4.0, "text": "Hej, jag heter Tobias."},
+    ]
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(json.dumps({"segments": existing_segments}))
+    diarization_path = tmp_path / "diarization.json"
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("transcribe_audio should not run when transcript artifact already exists")
+
+    monkeypatch.setattr(transcribe_module, "transcribe_audio", _boom)
+
+    bundle = transcribe_and_attribute(
+        audio_path=tmp_path / "audio.wav",
+        transcript_output_path=transcript_path,
+        diarization_segments=[{"speaker_id": "S1", "start": 0.0, "end": 4.0}],
+        diarization_output_path=diarization_path,
+        max_speakers=6,
+    )
+
+    assert len({seg["speaker_id"] for seg in bundle["diarization"]}) >= 2
