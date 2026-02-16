@@ -81,34 +81,59 @@ Emotion Detection
 
 - Transformer model: `trpakov/vit-face-expression` (Hugging Face). The app accepts `EMOTION_MODEL_NAME=nateraw/fer` but maps it to `trpakov/vit-face-expression` for compatibility.
 
-🧰 Tech Stack
-Languages
+🧰 Technologies Used (and Why)
 
-Python 3.11 (backend + ML pipeline)
+| Technology | Why it is used |
+|---|---|
+| **Python 3.11** | Main backend and pipeline language; strong support for AI/ML and media tooling. |
+| **FastAPI + Uvicorn** | Lightweight async API server for upload, job management, and streaming events (SSE). |
+| **PyTorch / TorchVision / Torchaudio** | Core deep-learning runtime used by face and emotion models. |
+| **facenet-pytorch (MTCNN + InceptionResnetV1)** | MTCNN detects faces; InceptionResnetV1 creates robust face embeddings for identity matching and re-identification. |
+| **Transformers (Hugging Face)** | Runs the facial emotion classifier (`trpakov/vit-face-expression`) for per-frame/per-track emotion labels. |
+| **OpenCV** | Video frame decode/processing, drawing overlays, and track-level visual operations. |
+| **FFmpeg** | Reliable audio extraction and media conversion before diarization/transcription steps. |
+| **NumPy (pinned)** | Stable numerical operations and array handling across pipeline stages. |
+| **Rich** | Better structured logs and progress output for local development/debugging. |
+| **HTML + JavaScript** | Simple browser UI for timeline playback and result visualization. |
+| **pyannote.audio (optional)** | Higher-quality speaker diarization when a Hugging Face token is provided. |
 
-JavaScript / HTML (minimal UI viewer)
+---
 
-Core Libraries
+## 🔄 Workflow (End-to-End)
 
-FastAPI, Uvicorn
+1. **Video upload**
+   - User uploads a raw video through the API/UI.
+   - A job is created and queued.
 
-NumPy ==1.26.4 (pinned)
+2. **Frame pipeline starts**
+   - Frames are read from video.
+   - Faces are detected and tracked with stable IDs (FT1, FT2, ...).
 
-Torch / TorchVision / Torchaudio (CPU)
+3. **Identity inference**
+   - Face embeddings are computed for each track.
+   - Embeddings are compared with the identity store.
+   - Known match → show person name; unknown → keep as Unknown and allow later confirmation.
 
-OpenCV
+4. **Emotion inference**
+   - Cropped face regions are passed to the emotion model.
+   - Emotions + confidence are added to each face track timeline.
 
-Transformers (Hugging Face) for facial expression recognition (`nateraw/fer`)
+5. **Audio pipeline**
+   - Audio is extracted using FFmpeg.
+   - Speaker diarization segments the audio into speaker IDs (S1, S2, ...).
 
-facenet-pytorch (MTCNN + FaceNet embeddings)
+6. **Speaker-to-face association**
+   - Temporal overlap and activity heuristics associate active speakers with visible face tracks.
+   - Produces "who is speaking" alignment for playback.
 
-FFmpeg
+7. **Streaming updates**
+   - Pipeline progress and intermediate events are emitted via SSE (`/jobs/{job_id}/events`).
 
-Rich (logging)
+8. **Final export**
+   - `ui.json` is generated with tracks, names, emotions, speaker segments, and associations.
+   - Identity store is updated for future re-identification across videos.
 
-Optional
-
-pyannote.audio (speaker diarization, requires HF token)
+---
 
 ⚙️ Prerequisites
 Required
