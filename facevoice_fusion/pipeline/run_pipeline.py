@@ -18,7 +18,12 @@ from .emotion import infer_emotions
 from .face_detect_track import detect_and_track
 from .face_embed import embed_faces
 from .identity import enroll_identity, match_identity, remember_identity_embedding
-from .transcribe import attribute_speakers_to_segments, transcribe_audio
+from .transcribe import (
+    attribute_speakers_to_segments,
+    build_diarization_from_transcript_segments,
+    infer_speakers_from_transcript_turns,
+    transcribe_audio,
+)
 from .utils import console, load_json, save_json
 
 
@@ -136,6 +141,16 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         transcript_path = job_file(job_id, "transcript.json")
         transcript_segments = load_json(transcript_path).get("segments", []) if transcript_path.exists() else transcribe_audio(audio_path, transcript_path)
         transcript_segments = attribute_speakers_to_segments(speakers, transcript_segments)
+
+        speaker_ids = {str(seg.get("speaker_id") or "") for seg in speakers if seg.get("speaker_id")}
+        if len(speaker_ids) <= 1 and len(transcript_segments) >= 2:
+            inferred_segments = infer_speakers_from_transcript_turns(transcript_segments)
+            inferred_speaker_ids = {str(seg.get("speaker_id") or "") for seg in inferred_segments if seg.get("speaker_id")}
+            if len(inferred_speaker_ids) > 1:
+                transcript_segments = inferred_segments
+                speakers = build_diarization_from_transcript_segments(inferred_segments)
+                save_json(diar_path, {"segments": speakers})
+
         save_json(transcript_path, {"segments": transcript_segments})
         artifacts["transcript"] = str(transcript_path)
 

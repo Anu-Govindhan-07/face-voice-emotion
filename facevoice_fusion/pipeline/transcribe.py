@@ -139,6 +139,82 @@ def attribute_speakers_to_segments(speakers: List[dict], transcript_segments: Li
     return attributed
 
 
+
+
+_QUESTION_TO_OTHER_PATTERNS = [
+    re.compile(r"\bvad heter du\b", re.IGNORECASE),
+    re.compile(r"\bwhat(?:'s| is) your name\b", re.IGNORECASE),
+    re.compile(r"\bvad kommer du fr(?:a|å)n\b", re.IGNORECASE),
+    re.compile(r"\bwhere are you from\b", re.IGNORECASE),
+]
+
+
+def _asks_other_person(text: str) -> bool:
+    return any(pattern.search(text or "") for pattern in _QUESTION_TO_OTHER_PATTERNS)
+
+
+def infer_speakers_from_transcript_turns(transcript_segments: List[dict], max_speakers: int = 6) -> List[dict]:
+    if not transcript_segments:
+        return []
+
+    speaker_ids = [f"S{idx}" for idx in range(1, max(2, int(max_speakers)) + 1)]
+    name_to_speaker: Dict[str, str] = {}
+    known_speakers: List[str] = ["S1"]
+    current_speaker = "S1"
+    switch_next = False
+
+    output: List[dict] = []
+    for segment in transcript_segments:
+        enriched = dict(segment)
+        text = str(enriched.get("text") or "")
+
+        if switch_next and known_speakers:
+            if len(known_speakers) == 1:
+                next_speaker = "S2"
+                if next_speaker not in known_speakers:
+                    known_speakers.append(next_speaker)
+            else:
+                idx = known_speakers.index(current_speaker) if current_speaker in known_speakers else -1
+                next_speaker = known_speakers[(idx + 1) % len(known_speakers)]
+            current_speaker = next_speaker
+            switch_next = False
+
+        intro_name = _extract_self_identification_name(text)
+        if intro_name:
+            if intro_name not in name_to_speaker:
+                if len(name_to_speaker) < len(speaker_ids):
+                    sid = speaker_ids[len(name_to_speaker)]
+                else:
+                    sid = speaker_ids[-1]
+                name_to_speaker[intro_name] = sid
+                if sid not in known_speakers:
+                    known_speakers.append(sid)
+            current_speaker = name_to_speaker[intro_name]
+
+        enriched["speaker_id"] = current_speaker
+        output.append(enriched)
+
+        if _asks_other_person(text):
+            switch_next = True
+
+    return output
+
+
+def build_diarization_from_transcript_segments(transcript_segments: List[dict]) -> List[dict]:
+    diarization: List[dict] = []
+    ordered = sorted(transcript_segments, key=lambda seg: float(seg.get("start", 0.0)))
+    for segment in ordered:
+        speaker_id = str(segment.get("speaker_id") or "S1")
+        start = float(segment.get("start", 0.0))
+        end = float(segment.get("end", start))
+        if end <= start:
+            continue
+        if diarization and diarization[-1]["speaker_id"] == speaker_id and start <= float(diarization[-1]["end"]) + 0.15:
+            diarization[-1]["end"] = max(float(diarization[-1]["end"]), end)
+            continue
+        diarization.append({"speaker_id": speaker_id, "start": start, "end": end, "conf": 0.5})
+    return diarization
+
 def infer_name_signals(speakers: List[dict], transcript_segments: List[dict]) -> Dict[str, Dict[str, str]]:
     speaker_self_names: Dict[str, str] = {}
     speaker_mentioned_names: Dict[str, str] = {}
