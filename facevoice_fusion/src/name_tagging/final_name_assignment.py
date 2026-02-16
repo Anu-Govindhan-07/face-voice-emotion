@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pipeline.utils import save_json
 
-_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})"
+_NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30}(?:\s+[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})?)"
 _SELF_PATTERNS = [
     re.compile(rf"\bi['’]?m\s+{_NAME_TOKEN}\b", re.IGNORECASE),
     re.compile(rf"\bi am\s+{_NAME_TOKEN}\b", re.IGNORECASE),
@@ -19,8 +19,9 @@ _MENTION_PATTERNS = [
     re.compile(rf"\b(?:han heter|hon heter|he is|she is|called|named)\s+{_NAME_TOKEN}\b", re.IGNORECASE),
 ]
 _STOPWORDS = {
-    "jag", "du", "han", "hon", "det", "den", "mitt", "namn", "my", "name", "this", "that", "is", "är",
+    "jag", "du", "han", "hon", "det", "den", "mitt", "namn", "my", "name", "this", "that", "is", "är", "and", "or", "och", "eller", "und",
 }
+_NAME_SPLITTER = re.compile(r"\s+(?:and|och|or|eller|und)\s+", re.IGNORECASE)
 
 
 class _DefaultIdentityStore:
@@ -32,12 +33,23 @@ class _DefaultIdentityStore:
 
 
 def _normalize_name(raw: str) -> Optional[str]:
-    cleaned = re.sub(r"[^A-Za-zÅÄÖåäö\-']", "", (raw or "").strip())
-    if len(cleaned) < 2:
+    cleaned = (raw or "").strip(" .,!?:;\"'()[]{}")
+    cleaned = _NAME_SPLITTER.split(cleaned, maxsplit=1)[0].strip()
+    parts = [re.sub(r"[^A-Za-zÅÄÖåäö\-']", "", part) for part in cleaned.split()]
+    parts = [part for part in parts if part]
+    if not parts:
         return None
-    if cleaned.casefold() in _STOPWORDS:
+    normalized_parts: List[str] = []
+    for part in parts[:2]:
+        lowered = part.casefold()
+        if lowered in {"and", "or", "och", "eller", "und"}:
+            break
+        if len(part) < 2 or lowered in _STOPWORDS:
+            return None
+        normalized_parts.append(part[0].upper() + part[1:].lower())
+    if not normalized_parts:
         return None
-    return cleaned[0].upper() + cleaned[1:].lower()
+    return " ".join(normalized_parts)
 
 
 def _extract_name_signals(text: str) -> Dict[str, List[str]]:
