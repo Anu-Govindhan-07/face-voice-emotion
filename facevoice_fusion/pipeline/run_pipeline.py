@@ -143,13 +143,18 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         transcript_segments = attribute_speakers_to_segments(speakers, transcript_segments)
 
         speaker_ids = {str(seg.get("speaker_id") or "") for seg in speakers if seg.get("speaker_id")}
-        if len(speaker_ids) <= 1 and len(transcript_segments) >= 2:
-            inferred_segments = infer_speakers_from_transcript_turns(transcript_segments)
-            inferred_speaker_ids = {str(seg.get("speaker_id") or "") for seg in inferred_segments if seg.get("speaker_id")}
-            if len(inferred_speaker_ids) > 1:
-                transcript_segments = inferred_segments
-                speakers = build_diarization_from_transcript_segments(inferred_segments)
+        transcript_speaker_ids = {str(seg.get("speaker_id") or "") for seg in transcript_segments if seg.get("speaker_id")}
+        if len(speaker_ids) <= 1:
+            if len(transcript_speaker_ids) > 1:
+                speakers = build_diarization_from_transcript_segments(transcript_segments)
                 save_json(diar_path, {"segments": speakers})
+            elif len(transcript_segments) >= 2:
+                inferred_segments = infer_speakers_from_transcript_turns(transcript_segments)
+                inferred_speaker_ids = {str(seg.get("speaker_id") or "") for seg in inferred_segments if seg.get("speaker_id")}
+                if len(inferred_speaker_ids) > 1:
+                    transcript_segments = inferred_segments
+                    speakers = build_diarization_from_transcript_segments(inferred_segments)
+                    save_json(diar_path, {"segments": speakers})
 
         save_json(transcript_path, {"segments": transcript_segments})
         artifacts["transcript"] = str(transcript_path)
@@ -233,8 +238,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         save_json(job_file(job_id, "tracks_enriched.json"), {"tracks": tracks, "speakers": speakers, "associations": associations})
         from .export_ui import export_ui
 
-        if not ui_path.exists():
-            export_ui(ui_path, video_path, tracks, speakers, associations, artifacts)
+        export_ui(ui_path, video_path, tracks, speakers, associations, artifacts)
         job_store.update_job(job_id, status="done", stage="export", progress=100, artifacts=artifacts)
         _publish(job_id, "job.done", {"ui_path": str(ui_path)})
     except Exception as exc:
