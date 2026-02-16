@@ -18,12 +18,7 @@ from .emotion import infer_emotions
 from .face_detect_track import detect_and_track
 from .face_embed import embed_faces
 from .identity import enroll_identity, match_identity, remember_identity_embedding
-from .transcribe import (
-    attribute_speakers_to_segments,
-    build_diarization_from_transcript_segments,
-    infer_speakers_from_transcript_turns,
-    transcribe_audio,
-)
+from .transcribe import transcribe_and_attribute
 from .utils import console, load_json, save_json
 
 
@@ -139,19 +134,24 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         artifacts["diarization"] = str(diar_path)
 
         transcript_path = job_file(job_id, "transcript.json")
-        transcript_segments = load_json(transcript_path).get("segments", []) if transcript_path.exists() else transcribe_audio(audio_path, transcript_path)
-        transcript_segments = attribute_speakers_to_segments(speakers, transcript_segments)
+        raw_speaker_ids = sorted({str(seg.get("speaker_id")) for seg in speakers if seg.get("speaker_id")})
+        console.log(f"Diarization unique speakers (raw): {raw_speaker_ids}")
 
-        speaker_ids = {str(seg.get("speaker_id") or "") for seg in speakers if seg.get("speaker_id")}
-        if len(speaker_ids) <= 1 and len(transcript_segments) >= 2:
-            inferred_segments = infer_speakers_from_transcript_turns(transcript_segments)
-            inferred_speaker_ids = {str(seg.get("speaker_id") or "") for seg in inferred_segments if seg.get("speaker_id")}
-            if len(inferred_speaker_ids) > 1:
-                transcript_segments = inferred_segments
-                speakers = build_diarization_from_transcript_segments(inferred_segments)
-                save_json(diar_path, {"segments": speakers})
+        attribution_bundle = transcribe_and_attribute(
+            audio_path=audio_path,
+            transcript_output_path=transcript_path,
+            diarization_segments=speakers,
+            diarization_output_path=diar_path,
+            max_speakers=6,
+        )
+        speakers = attribution_bundle.get("diarization", [])
+        transcript_segments = attribution_bundle.get("transcript", [])
 
-        save_json(transcript_path, {"segments": transcript_segments})
+        final_speaker_ids = sorted({str(seg.get("speaker_id")) for seg in speakers if seg.get("speaker_id")})
+        console.log(f"Diarization unique speakers (final): {final_speaker_ids}")
+        if len(final_speaker_ids) <= 1:
+            console.log("[yellow]Warning: diarization remained single-speaker after robust attribution fallback.[/yellow]")
+
         artifacts["transcript"] = str(transcript_path)
 
         job_store.update_job(job_id, stage="associate", progress=70, artifacts=artifacts)
@@ -233,8 +233,7 @@ def run_pipeline(job_id: str, video_path: Path) -> None:
         save_json(job_file(job_id, "tracks_enriched.json"), {"tracks": tracks, "speakers": speakers, "associations": associations})
         from .export_ui import export_ui
 
-        if not ui_path.exists():
-            export_ui(ui_path, video_path, tracks, speakers, associations, artifacts)
+        export_ui(ui_path, video_path, tracks, speakers, associations, artifacts)
         job_store.update_job(job_id, status="done", stage="export", progress=100, artifacts=artifacts)
         _publish(job_id, "job.done", {"ui_path": str(ui_path)})
     except Exception as exc:
