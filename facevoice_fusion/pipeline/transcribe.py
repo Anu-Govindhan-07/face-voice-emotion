@@ -166,10 +166,16 @@ def _best_speaker_for_segment(speakers: List[dict], segment: dict) -> Optional[s
     return best_speaker_id
 
 
-def attribute_speakers_to_segments(speakers: List[dict], transcript_segments: List[dict]) -> List[dict]:
+def attribute_speakers_to_segments(
+    speakers: List[dict],
+    transcript_segments: List[dict],
+    overwrite: bool = False,
+) -> List[dict]:
     attributed: List[dict] = []
     for segment in transcript_segments:
         enriched = dict(segment)
+        if overwrite:
+            enriched.pop("speaker_id", None)
         speaker_id = enriched.get("speaker_id") or _best_speaker_for_segment(speakers, enriched)
         if speaker_id:
             enriched["speaker_id"] = speaker_id
@@ -294,8 +300,14 @@ def robust_speaker_attribution(
       }
     """
     diar_unique = _count_unique_speakers(diarization_segments or [])
+    raw_speakers = sorted({str(seg.get("speaker_id")) for seg in diarization_segments or [] if seg.get("speaker_id")})
+    console.log(f"Raw diarization speakers: {raw_speakers}")
+
     if diarization_segments and diar_unique >= 2:
-        attributed = attribute_speakers_to_segments(diarization_segments, transcript_segments)
+        attributed = attribute_speakers_to_segments(diarization_segments, transcript_segments, overwrite=True)
+        transcript_speakers = sorted({str(seg.get("speaker_id")) for seg in attributed if seg.get("speaker_id")})
+        console.log(f"Final diarization speakers: {raw_speakers}")
+        console.log(f"Transcript speakers after attribution: {transcript_speakers}")
         return {"diarization": diarization_segments, "transcript": attributed}
 
     # diarization is empty or single-speaker -> infer from transcript
@@ -304,11 +316,20 @@ def robust_speaker_attribution(
 
     if inf_unique < 2:
         # still single speaker; fallback to whatever diarization gave
-        attributed = attribute_speakers_to_segments(diarization_segments or [], transcript_segments)
-        return {"diarization": diarization_segments or [], "transcript": attributed}
+        final_diar = diarization_segments or []
+        attributed = attribute_speakers_to_segments(final_diar, transcript_segments, overwrite=True)
+        final_speakers = sorted({str(seg.get("speaker_id")) for seg in final_diar if seg.get("speaker_id")})
+        transcript_speakers = sorted({str(seg.get("speaker_id")) for seg in attributed if seg.get("speaker_id")})
+        console.log(f"Final diarization speakers: {final_speakers}")
+        console.log(f"Transcript speakers after attribution: {transcript_speakers}")
+        return {"diarization": final_diar, "transcript": attributed}
 
     rebuilt_diar = build_diarization_from_transcript_segments(inferred)
-    attributed = attribute_speakers_to_segments(rebuilt_diar, transcript_segments)
+    attributed = attribute_speakers_to_segments(rebuilt_diar, transcript_segments, overwrite=True)
+    final_speakers = sorted({str(seg.get("speaker_id")) for seg in rebuilt_diar if seg.get("speaker_id")})
+    transcript_speakers = sorted({str(seg.get("speaker_id")) for seg in attributed if seg.get("speaker_id")})
+    console.log(f"Final diarization speakers: {final_speakers}")
+    console.log(f"Transcript speakers after attribution: {transcript_speakers}")
 
     return {"diarization": rebuilt_diar, "transcript": attributed}
 

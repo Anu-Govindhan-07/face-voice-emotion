@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "facevoice_fusion")
 
 from pipeline import transcribe as transcribe_module
 from pipeline.transcribe import (
+    attribute_speakers_to_segments,
     build_diarization_from_transcript_segments,
     infer_speakers_from_transcript_turns,
     transcribe_and_attribute,
@@ -92,3 +93,19 @@ def test_transcribe_and_attribute_uses_existing_transcript_artifact(tmp_path, mo
     )
 
     assert len({seg["speaker_id"] for seg in bundle["diarization"]}) >= 2
+
+
+def test_attribute_speakers_to_segments_overwrite_reassigns_stale_cached_speaker_ids():
+    transcript_segments = [
+        {"start": 0.0, "end": 1.0, "text": "a", "speaker_id": "S1"},
+        {"start": 1.0, "end": 2.0, "text": "b", "speaker_id": "S1"},
+    ]
+    diarization_segments = [
+        {"speaker_id": "S1", "start": 0.0, "end": 1.0},
+        {"speaker_id": "S2", "start": 1.0, "end": 2.0},
+    ]
+
+    attributed = attribute_speakers_to_segments(diarization_segments, transcript_segments, overwrite=True)
+
+    assert attributed[0]["speaker_id"] == "S1"
+    assert attributed[1]["speaker_id"] == "S2"
