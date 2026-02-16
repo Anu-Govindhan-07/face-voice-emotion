@@ -81,8 +81,9 @@ def _name_by_track(
     name_segments: List[Dict[str, Any]],
     speaker_track_map: Dict[str, Dict[str, Any]],
     face_tracks: List[Dict[str, Any]],
-) -> Dict[str, List[Dict[str, Any]]]:
+) -> Tuple[Dict[str, List[Dict[str, Any]]], int]:
     out: Dict[str, List[Dict[str, Any]]] = {str(t.get("track_id")): [] for t in face_tracks if t.get("track_id")}
+    out_of_scene_mentions = 0
 
     for seg in name_segments:
         sid = str(seg.get("speaker_id") or "unknown")
@@ -114,7 +115,9 @@ def _name_by_track(
                         best_tid = tid
                 if best_tid:
                     out.setdefault(str(best_tid), []).append(row)
-    return out
+                else:
+                    out_of_scene_mentions += 1
+    return out, out_of_scene_mentions
 
 
 def _identity_for_track(job_id: str, track_id: str, names: List[Dict[str, Any]], min_intro_conf: float, identity_store: Any = None) -> Dict[str, Any]:
@@ -151,12 +154,13 @@ def build_track_summary(
     aligned = align_asr_to_diarization(diarized_segments, asr_segments)
     name_segments = extract_name_signals_from_segments(aligned, {"min_name_confidence": min_name_conf})
     speaker_track_map = _map_speaker_to_track(face_tracks, diarized_segments)
-    names_by_track = _name_by_track(name_segments, speaker_track_map, face_tracks)
+    names_by_track, out_of_scene_mentions = _name_by_track(name_segments, speaker_track_map, face_tracks)
 
     tracks: List[Dict[str, Any]] = []
     for track in face_tracks:
         track_id = str(track.get("track_id"))
         speaker_id = next((sid for sid, mapping in speaker_track_map.items() if mapping.get("track_id") == track_id), None)
+        speaker_mapping_confidence = float((speaker_track_map.get(str(speaker_id)) or {}).get("confidence", 0.0)) if speaker_id else 0.0
         detected_names = names_by_track.get(track_id, [])
         language = next((seg.get("language") for seg in name_segments if str(seg.get("speaker_id")) == str(speaker_id)), "unknown")
 
@@ -173,6 +177,7 @@ def build_track_summary(
             {
                 "track_id": track_id,
                 "speaker_id": speaker_id,
+                "speaker_mapping_confidence": round(speaker_mapping_confidence, 4),
                 "language": language or "unknown",
                 "detected_names": detected_names,
                 "recognized_identity": recognized_identity,
@@ -183,6 +188,8 @@ def build_track_summary(
         )
 
     summary = {"job_id": job_id, "tracks": tracks}
+    if out_of_scene_mentions:
+        summary["out_of_scene_mentions"] = out_of_scene_mentions
     out_path = Path("data") / "jobs" / job_id / "final_track_summary.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     save_json(out_path, summary)

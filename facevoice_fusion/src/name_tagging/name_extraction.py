@@ -18,10 +18,11 @@ _SELF_PATTERNS = [
 ]
 _MENTION_PATTERNS = [
     re.compile(r"\b(?:this is|det här är|meet)\s+([^.!?\n]+)", re.IGNORECASE),
+    re.compile(r"\b(?:han heter|hon heter|él se llama|ella se llama|il s'appelle|elle s'appelle)\s+([^.!?\n]+)", re.IGNORECASE),
 ]
 
 _SELF_CUE = re.compile(r"\b(i am|i['’]m|my name is|jag heter|mitt namn är)\b", re.IGNORECASE)
-_MENTION_CUE = re.compile(r"\b(this is|det här är|meet)\b", re.IGNORECASE)
+_MENTION_CUE = re.compile(r"\b(this is|det här är|meet|han heter|hon heter|él se llama|ella se llama|il s'appelle|elle s'appelle)\b", re.IGNORECASE)
 _SPLIT_NAMES = re.compile(r"\s*(?:,|;|&|\band\b|\boch\b)\s*", re.IGNORECASE)
 
 _COMMON_WORD_BLOCKLIST = {
