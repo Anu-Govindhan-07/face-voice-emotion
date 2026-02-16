@@ -128,7 +128,7 @@ $env:HUGGINGFACE_TOKEN="your_token"
 export HUGGINGFACE_TOKEN="your_token"
 ```
 
-If the token is missing or pyannote is unavailable, the pipeline falls back to a single-speaker diarization.
+If the token is missing or pyannote is unavailable, the pipeline falls back to a local multi-speaker diarization (MFCC window clustering, up to 4 speakers) instead of forcing a single speaker.
 
 ## Optional: Emotion model selection
 The default emotion model is `trpakov/vit-face-expression`. You can override it by setting:
