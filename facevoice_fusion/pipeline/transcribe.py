@@ -25,6 +25,10 @@ def _is_openai_transcribe_model(model_name: str) -> bool:
     return str(model_name or "").startswith("gpt-4o-")
 
 
+def _is_openai_diarize_model(model_name: str) -> bool:
+    return str(model_name or "").strip() == "gpt-4o-transcribe-diarize"
+
+
 def _normalize_openai_speaker(raw_value: Any, label_map: Dict[str, str]) -> Optional[str]:
     if raw_value is None:
         return None
@@ -48,7 +52,11 @@ def _transcribe_audio_openai(audio_path: Path) -> List[dict]:
 
     with audio_path.open("rb") as audio_file:
         files = {"file": (audio_path.name, audio_file, "audio/wav")}
-        data = {"model": ASR_MODEL_NAME, "response_format": "verbose_json"}
+        data = {
+            "model": ASR_MODEL_NAME,
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": "segment",
+        }
         if ASR_LANGUAGE_HINT:
             data["language"] = ASR_LANGUAGE_HINT
 
@@ -65,7 +73,8 @@ def _transcribe_audio_openai(audio_path: Path) -> List[dict]:
 
     segments: List[dict] = []
     label_map: Dict[str, str] = {}
-    for chunk in payload.get("segments", []) or []:
+    raw_chunks = payload.get("segments", []) or payload.get("utterances", []) or []
+    for chunk in raw_chunks:
         start = chunk.get("start")
         end = chunk.get("end")
         if start is None or end is None:
@@ -74,7 +83,10 @@ def _transcribe_audio_openai(audio_path: Path) -> List[dict]:
         if not text:
             continue
         segment = {"start": float(start), "end": float(end), "text": text}
-        speaker_id = _normalize_openai_speaker(chunk.get("speaker") or chunk.get("speaker_id"), label_map)
+        speaker_id = _normalize_openai_speaker(
+            chunk.get("speaker") or chunk.get("speaker_id") or chunk.get("speaker_label"),
+            label_map,
+        )
         if speaker_id:
             segment["speaker_id"] = speaker_id
         segments.append(segment)
@@ -362,6 +374,20 @@ def _count_unique_speakers(segs: List[dict]) -> int:
     return len({s.get("speaker_id") for s in segs if s.get("speaker_id")})
 
 
+def _should_refresh_cached_transcript(
+    transcript_segments: List[dict],
+    diarization_segments: List[dict],
+) -> bool:
+    """
+    Avoid stale single-speaker transcript artifacts in reruns when using OpenAI diarization ASR.
+    """
+    if not _is_openai_diarize_model(ASR_MODEL_NAME):
+        return False
+    tr_unique = _count_unique_speakers(transcript_segments or [])
+    diar_unique = _count_unique_speakers(diarization_segments or [])
+    return bool(transcript_segments) and tr_unique < 2 and diar_unique < 2
+
+
 def robust_speaker_attribution(
     diarization_segments: List[dict],
     transcript_segments: List[dict],
@@ -500,6 +526,13 @@ def transcribe_and_attribute(
             transcript_segments = load_json(transcript_output_path).get("segments", [])
         except Exception as exc:
             console.log(f"Failed to read existing transcript artifact; rerunning ASR: {exc}")
+
+    if _should_refresh_cached_transcript(transcript_segments, diarization_segments):
+        console.log(
+            "Cached transcript appears single-speaker while using gpt-4o-transcribe-diarize; "
+            "refreshing transcript from ASR."
+        )
+        transcript_segments = []
 
     if not transcript_segments:
         transcript_segments = transcribe_audio(audio_path, transcript_output_path)

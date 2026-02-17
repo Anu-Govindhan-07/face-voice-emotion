@@ -208,3 +208,63 @@ def test_transcribe_audio_openai_requires_api_key(tmp_path, monkeypatch):
     segments = transcribe_module.transcribe_audio(audio_path, transcript_path)
 
     assert segments == []
+
+
+def test_transcribe_audio_openai_diarize_reads_utterances_payload(tmp_path, monkeypatch):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    transcript_path = tmp_path / "transcript.json"
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "utterances": [
+                    {"start": 0.0, "end": 1.0, "text": "hello", "speaker_label": "speaker_0"},
+                    {"start": 1.0, "end": 2.0, "text": "hi", "speaker_label": "speaker_3"},
+                ]
+            }
+
+    monkeypatch.setattr(transcribe_module, "ASR_MODEL_NAME", "gpt-4o-transcribe-diarize")
+    monkeypatch.setattr(transcribe_module, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(transcribe_module.requests, "post", lambda *args, **kwargs: _Resp())
+
+    segments = transcribe_module.transcribe_audio(audio_path, transcript_path)
+
+    assert [seg["speaker_id"] for seg in segments] == ["S1", "S4"]
+
+
+def test_transcribe_and_attribute_refreshes_stale_cached_transcript_for_openai_diarize(tmp_path, monkeypatch):
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {"start": 0.0, "end": 1.0, "text": "old a", "speaker_id": "S1"},
+                    {"start": 1.0, "end": 2.0, "text": "old b", "speaker_id": "S1"},
+                ]
+            }
+        )
+    )
+    diarization_path = tmp_path / "diarization.json"
+
+    fresh_segments = [
+        {"start": 0.0, "end": 1.0, "text": "new a", "speaker_id": "S1"},
+        {"start": 1.0, "end": 2.0, "text": "new b", "speaker_id": "S2"},
+    ]
+
+    monkeypatch.setattr(transcribe_module, "ASR_MODEL_NAME", "gpt-4o-transcribe-diarize")
+    monkeypatch.setattr(transcribe_module, "transcribe_audio", lambda *_args, **_kwargs: fresh_segments)
+
+    bundle = transcribe_and_attribute(
+        audio_path=tmp_path / "audio.wav",
+        transcript_output_path=transcript_path,
+        diarization_segments=[{"speaker_id": "S1", "start": 0.0, "end": 2.0}],
+        diarization_output_path=diarization_path,
+        max_speakers=6,
+    )
+
+    assert [seg["text"] for seg in bundle["transcript"]] == ["new a", "new b"]
+    assert len({seg["speaker_id"] for seg in bundle["diarization"]}) == 2
