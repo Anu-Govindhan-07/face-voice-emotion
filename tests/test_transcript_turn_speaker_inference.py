@@ -169,3 +169,42 @@ def test_robust_speaker_attribution_inference_failure_is_non_destructive():
 
     assert bundle["diarization"] == diarization_segments
     assert bundle["transcript"] == transcript_segments
+
+
+def test_transcribe_audio_supports_openai_diarize_model(tmp_path, monkeypatch):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    transcript_path = tmp_path / "transcript.json"
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "segments": [
+                    {"start": 0.0, "end": 1.0, "text": "hello", "speaker": "speaker_0"},
+                    {"start": 1.0, "end": 2.0, "text": "hi", "speaker": "speaker_1"},
+                ]
+            }
+
+    monkeypatch.setattr(transcribe_module, "ASR_MODEL_NAME", "gpt-4o-transcribe-diarize")
+    monkeypatch.setattr(transcribe_module, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(transcribe_module.requests, "post", lambda *args, **kwargs: _Resp())
+
+    segments = transcribe_module.transcribe_audio(audio_path, transcript_path)
+
+    assert [seg["speaker_id"] for seg in segments] == ["S1", "S2"]
+
+
+def test_transcribe_audio_openai_requires_api_key(tmp_path, monkeypatch):
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    transcript_path = tmp_path / "transcript.json"
+
+    monkeypatch.setattr(transcribe_module, "ASR_MODEL_NAME", "gpt-4o-transcribe")
+    monkeypatch.setattr(transcribe_module, "OPENAI_API_KEY", "")
+
+    segments = transcribe_module.transcribe_audio(audio_path, transcript_path)
+
+    assert segments == []

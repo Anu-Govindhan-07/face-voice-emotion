@@ -31,6 +31,7 @@ ASR_CHUNK_LENGTH_S = int(os.getenv("ASR_CHUNK_LENGTH_S", "30"))
 ASR_STRIDE_LENGTH_S = int(os.getenv("ASR_STRIDE_LENGTH_S", "5"))
 ASR_NUM_BEAMS = int(os.getenv("ASR_NUM_BEAMS", "5"))
 ASR_LANGUAGE_HINT = os.getenv("ASR_LANGUAGE_HINT", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ALLOW_TRANSCRIPT_IDENTITY_ENROLL = os.getenv("ALLOW_TRANSCRIPT_IDENTITY_ENROLL", "0") == "1"
 
 MODEL_VERSIONS = {
@@ -39,4 +40,5 @@ MODEL_VERSIONS = {
     "emotion_model": EMOTION_MODEL_NAME,
     "diarization_model": "pyannote-or-fallback",
     "asr_model": ASR_MODEL_NAME,
+    "asr_provider": "openai" if ASR_MODEL_NAME.startswith("gpt-4o-") else "transformers",
 }
