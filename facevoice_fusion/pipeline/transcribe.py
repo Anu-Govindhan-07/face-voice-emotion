@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import requests
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -9,11 +10,85 @@ from app.config import (
     ASR_CHUNK_LENGTH_S,
     ASR_LANGUAGE_HINT,
     ASR_MODEL_NAME,
+    OPENAI_API_KEY,
     ASR_NUM_BEAMS,
     ASR_STRIDE_LENGTH_S,
 )
 from .utils import console, load_json, save_json
 
+
+
+def _is_openai_transcribe_model(model_name: str) -> bool:
+    return str(model_name or "").startswith("gpt-4o-")
+
+
+def _is_openai_diarize_model(model_name: str) -> bool:
+    return str(model_name or "").strip() == "gpt-4o-transcribe-diarize"
+
+
+def _normalize_openai_speaker(raw_value: Any, label_map: Dict[str, str]) -> Optional[str]:
+    if raw_value is None:
+        return None
+    val = str(raw_value).strip()
+    if not val:
+        return None
+    digits = "".join(ch for ch in val if ch.isdigit())
+    if digits:
+        n = int(digits)
+        if "speaker" in val.casefold():
+            n += 1
+        return f"S{n}"
+    if val not in label_map:
+        label_map[val] = f"S{len(label_map) + 1}"
+    return label_map[val]
+
+
+def _transcribe_audio_openai(audio_path: Path) -> List[dict]:
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    with audio_path.open("rb") as audio_file:
+        files = {"file": (audio_path.name, audio_file, "audio/wav")}
+        data = {
+            "model": ASR_MODEL_NAME,
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": "segment",
+        }
+        if ASR_LANGUAGE_HINT:
+            data["language"] = ASR_LANGUAGE_HINT
+
+        response = requests.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            data=data,
+            files=files,
+            timeout=180,
+        )
+
+    response.raise_for_status()
+    payload = response.json()
+
+    segments: List[dict] = []
+    label_map: Dict[str, str] = {}
+    raw_chunks = payload.get("segments", []) or payload.get("utterances", []) or []
+    for chunk in raw_chunks:
+        start = chunk.get("start")
+        end = chunk.get("end")
+        if start is None or end is None:
+            continue
+        text = str(chunk.get("text") or "").strip()
+        if not text:
+            continue
+        segment = {"start": float(start), "end": float(end), "text": text}
+        speaker_id = _normalize_openai_speaker(
+            chunk.get("speaker") or chunk.get("speaker_id") or chunk.get("speaker_label"),
+            label_map,
+        )
+        if speaker_id:
+            segment["speaker_id"] = speaker_id
+        segments.append(segment)
+
+    return segments
 
 _NAME_TOKEN = r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30}(?:\s+[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö\-']{1,30})?)"
 _SELF_IDENTIFICATION_PATTERNS = [
@@ -45,34 +120,37 @@ def transcribe_audio(audio_path: Path, output_path: Path) -> List[dict]:
     segments: List[dict] = []
 
     try:
-        from transformers import pipeline
+        if _is_openai_transcribe_model(ASR_MODEL_NAME):
+            segments = _transcribe_audio_openai(audio_path)
+        else:
+            from transformers import pipeline
 
-        asr = pipeline(
-            task="automatic-speech-recognition",
-            model=ASR_MODEL_NAME,
-            chunk_length_s=ASR_CHUNK_LENGTH_S,
-            stride_length_s=ASR_STRIDE_LENGTH_S,
-            return_timestamps=True,
-            model_kwargs={"attn_implementation": "sdpa"},
-        )
-        generate_kwargs: Dict[str, Any] = {"num_beams": ASR_NUM_BEAMS}
-        if ASR_LANGUAGE_HINT:
-            generate_kwargs["language"] = ASR_LANGUAGE_HINT
+            asr = pipeline(
+                task="automatic-speech-recognition",
+                model=ASR_MODEL_NAME,
+                chunk_length_s=ASR_CHUNK_LENGTH_S,
+                stride_length_s=ASR_STRIDE_LENGTH_S,
+                return_timestamps=True,
+                model_kwargs={"attn_implementation": "sdpa"},
+            )
+            generate_kwargs: Dict[str, Any] = {"num_beams": ASR_NUM_BEAMS}
+            if ASR_LANGUAGE_HINT:
+                generate_kwargs["language"] = ASR_LANGUAGE_HINT
 
-        result = asr(str(audio_path), return_timestamps=True, generate_kwargs=generate_kwargs)
+            result = asr(str(audio_path), return_timestamps=True, generate_kwargs=generate_kwargs)
 
-        chunks = result.get("chunks", []) if isinstance(result, dict) else []
-        for chunk in chunks:
-            ts = chunk.get("timestamp")
-            if not ts or len(ts) != 2:
-                continue
-            start, end = ts
-            if start is None or end is None:
-                continue
-            text = (chunk.get("text") or "").strip()
-            if not text:
-                continue
-            segments.append({"start": float(start), "end": float(end), "text": text})
+            chunks = result.get("chunks", []) if isinstance(result, dict) else []
+            for chunk in chunks:
+                ts = chunk.get("timestamp")
+                if not ts or len(ts) != 2:
+                    continue
+                start, end = ts
+                if start is None or end is None:
+                    continue
+                text = (chunk.get("text") or "").strip()
+                if not text:
+                    continue
+                segments.append({"start": float(start), "end": float(end), "text": text})
 
     except Exception as exc:
         console.log(f"ASR failed; continuing without transcript: {exc}")
@@ -229,6 +307,20 @@ def _count_unique_speakers(segs: List[dict]) -> int:
     return len({s.get("speaker_id") for s in segs if s.get("speaker_id")})
 
 
+def _should_refresh_cached_transcript(
+    transcript_segments: List[dict],
+    diarization_segments: List[dict],
+) -> bool:
+    """
+    Avoid stale single-speaker transcript artifacts in reruns when using OpenAI diarization ASR.
+    """
+    if not _is_openai_diarize_model(ASR_MODEL_NAME):
+        return False
+    tr_unique = _count_unique_speakers(transcript_segments or [])
+    diar_unique = _count_unique_speakers(diarization_segments or [])
+    return bool(transcript_segments) and tr_unique < 2 and diar_unique < 2
+
+
 def robust_speaker_attribution(
     diarization_segments: List[dict],
     transcript_segments: List[dict],
@@ -237,6 +329,7 @@ def robust_speaker_attribution(
     diar_unique = _count_unique_speakers(diarization_segments or [])
     tr_unique = _count_unique_speakers(transcript_segments or [])
 
+    # Case 1: diarization already has multiple speakers -> force fresh attribution
     if diarization_segments and diar_unique >= 2:
         attributed = attribute_speakers_to_segments(diarization_segments, transcript_segments, overwrite=True)
         return {"diarization": diarization_segments, "transcript": attributed}
