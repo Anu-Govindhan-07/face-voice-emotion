@@ -1,4 +1,195 @@
 {
-  "persons": {},
-  "meta": {"schema_version": 1}
+  "version": 1,
+  "identities": [
+    {
+      "index_no": 108680,
+      "person_id": "PDE0D654B7B23",
+      "name": "Yuna",
+      "aliases": [],
+      "created_at": "2026-03-03T16:39:13.216657+00:00",
+      "updated_at": "2026-03-03T16:39:13.339510+00:00",
+      "sample_count": 2,
+      "embedding_paths": [
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PDE0D654B7B23\\20260303T163913216657Z_92ce866c23a947b692ba25492b47cb55_FT1.npy",
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PDE0D654B7B23\\20260303T163913320378Z_92ce866c23a947b692ba25492b47cb55_FT16.npy"
+      ],
+      "centroid_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PDE0D654B7B23\\centroid.npy",
+      "job_ids": [
+        "92ce866c23a947b692ba25492b47cb55"
+      ],
+      "tracks": [
+        "FT1",
+        "FT16"
+      ],
+      "associations": [
+        {
+          "job_id": "92ce866c23a947b692ba25492b47cb55",
+          "track_id": "FT1",
+          "name": "Yuna",
+          "source": "self_intro",
+          "speaker_id": null,
+          "created_at": "2026-03-03T16:39:13.235364+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PDE0D654B7B23\\20260303T163913216657Z_92ce866c23a947b692ba25492b47cb55_FT1.npy",
+          "first_seen_ts": 105.0
+        },
+        {
+          "job_id": "92ce866c23a947b692ba25492b47cb55",
+          "track_id": "FT16",
+          "name": "Yuna",
+          "source": "self_intro",
+          "speaker_id": null,
+          "created_at": "2026-03-03T16:39:13.335961+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PDE0D654B7B23\\20260303T163913320378Z_92ce866c23a947b692ba25492b47cb55_FT16.npy",
+          "first_seen_ts": 87.4
+        }
+      ]
+    },
+    {
+      "index_no": 227149,
+      "person_id": "P89A28061C9A6",
+      "name": "Ana",
+      "aliases": [],
+      "created_at": "2026-03-03T16:39:13.255211+00:00",
+      "updated_at": "2026-03-03T16:39:14.392397+00:00",
+      "sample_count": 2,
+      "embedding_paths": [
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P89A28061C9A6\\20260303T163913255211Z_92ce866c23a947b692ba25492b47cb55_FT2.npy",
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P89A28061C9A6\\20260303T163914375491Z_92ce866c23a947b692ba25492b47cb55_FT2.npy"
+      ],
+      "centroid_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P89A28061C9A6\\centroid.npy",
+      "job_ids": [
+        "92ce866c23a947b692ba25492b47cb55"
+      ],
+      "tracks": [
+        "FT2"
+      ],
+      "associations": [
+        {
+          "job_id": "92ce866c23a947b692ba25492b47cb55",
+          "track_id": "FT2",
+          "name": "Ana",
+          "source": "self_intro",
+          "speaker_id": null,
+          "created_at": "2026-03-03T16:39:13.269986+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P89A28061C9A6\\20260303T163913255211Z_92ce866c23a947b692ba25492b47cb55_FT2.npy",
+          "first_seen_ts": 0.0
+        },
+        {
+          "job_id": "92ce866c23a947b692ba25492b47cb55",
+          "track_id": "FT2",
+          "name": "Ana",
+          "source": "self_intro_window",
+          "speaker_id": "S2",
+          "created_at": "2026-03-03T16:39:14.389362+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P89A28061C9A6\\20260303T163914375491Z_92ce866c23a947b692ba25492b47cb55_FT2.npy",
+          "first_seen_ts": 0.0
+        }
+      ]
+    },
+    {
+      "index_no": 122018,
+      "person_id": "PD8419E4DDD72",
+      "name": "Not",
+      "aliases": [],
+      "created_at": "2026-03-03T16:39:13.288652+00:00",
+      "updated_at": "2026-03-03T16:39:13.307054+00:00",
+      "sample_count": 1,
+      "embedding_paths": [
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PD8419E4DDD72\\20260303T163913288652Z_92ce866c23a947b692ba25492b47cb55_FT11.npy"
+      ],
+      "centroid_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PD8419E4DDD72\\centroid.npy",
+      "job_ids": [
+        "92ce866c23a947b692ba25492b47cb55"
+      ],
+      "tracks": [
+        "FT11"
+      ],
+      "associations": [
+        {
+          "job_id": "92ce866c23a947b692ba25492b47cb55",
+          "track_id": "FT11",
+          "name": "Not",
+          "source": "self_intro",
+          "speaker_id": null,
+          "created_at": "2026-03-03T16:39:13.303031+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PD8419E4DDD72\\20260303T163913288652Z_92ce866c23a947b692ba25492b47cb55_FT11.npy",
+          "first_seen_ts": 67.0
+        }
+      ]
+    },
+    {
+      "index_no": 286407,
+      "person_id": "P0B0F1B259D13",
+      "name": "Hyunwoo",
+      "aliases": [],
+      "created_at": "2026-03-03T17:18:42.024125+00:00",
+      "updated_at": "2026-03-03T17:18:42.121497+00:00",
+      "sample_count": 2,
+      "embedding_paths": [
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P0B0F1B259D13\\20260303T171842024125Z_2d49762330a84810bb1a8576943fa3ab_FT1.npy",
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P0B0F1B259D13\\20260303T171842101983Z_2d49762330a84810bb1a8576943fa3ab_FT4.npy"
+      ],
+      "centroid_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P0B0F1B259D13\\centroid.npy",
+      "job_ids": [
+        "2d49762330a84810bb1a8576943fa3ab"
+      ],
+      "tracks": [
+        "FT1",
+        "FT4"
+      ],
+      "associations": [
+        {
+          "job_id": "2d49762330a84810bb1a8576943fa3ab",
+          "track_id": "FT1",
+          "name": "Hyunwoo",
+          "source": "self_intro",
+          "speaker_id": null,
+          "created_at": "2026-03-03T17:18:42.042459+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P0B0F1B259D13\\20260303T171842024125Z_2d49762330a84810bb1a8576943fa3ab_FT1.npy",
+          "first_seen_ts": 0.0
+        },
+        {
+          "job_id": "2d49762330a84810bb1a8576943fa3ab",
+          "track_id": "FT4",
+          "name": "Hyunwoo",
+          "source": "self_intro",
+          "speaker_id": null,
+          "created_at": "2026-03-03T17:18:42.116499+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\P0B0F1B259D13\\20260303T171842101983Z_2d49762330a84810bb1a8576943fa3ab_FT4.npy",
+          "first_seen_ts": 52.74
+        }
+      ]
+    },
+    {
+      "index_no": 936059,
+      "person_id": "PD5BE4FF159D5",
+      "name": "Friends With",
+      "aliases": [],
+      "created_at": "2026-03-03T17:18:42.065202+00:00",
+      "updated_at": "2026-03-03T17:18:42.085477+00:00",
+      "sample_count": 1,
+      "embedding_paths": [
+        "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PD5BE4FF159D5\\20260303T171842066204Z_2d49762330a84810bb1a8576943fa3ab_FT2.npy"
+      ],
+      "centroid_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PD5BE4FF159D5\\centroid.npy",
+      "job_ids": [
+        "2d49762330a84810bb1a8576943fa3ab"
+      ],
+      "tracks": [
+        "FT2"
+      ],
+      "associations": [
+        {
+          "job_id": "2d49762330a84810bb1a8576943fa3ab",
+          "track_id": "FT2",
+          "name": "Friends With",
+          "source": "self_intro",
+          "speaker_id": null,
+          "created_at": "2026-03-03T17:18:42.080200+00:00",
+          "embedding_path": "C:\\Users\\windo\\Desktop\\face-voice-emotion-V\\face-voice-emotion\\facevoice_fusion\\identity_store\\embeddings\\PD5BE4FF159D5\\20260303T171842066204Z_2d49762330a84810bb1a8576943fa3ab_FT2.npy",
+          "first_seen_ts": 57.58
+        }
+      ]
+    }
+  ]
 }
